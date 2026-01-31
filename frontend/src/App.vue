@@ -27,7 +27,10 @@ const periods = [
   { value: 'today', label: 'Heute' },
   { value: 'week', label: '7 Tage' },
   { value: 'twoweeks', label: '14 Tage' },
-  { value: 'month', label: '30 Tage' }
+  { value: 'month', label: '30 Tage' },
+  { value: 'quarter', label: '3 Monate' },
+  { value: 'halfyear', label: '6 Monate' },
+  { value: 'year', label: '1 Jahr' }
 ]
 
 // API Fetch Helper
