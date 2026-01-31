@@ -20,6 +20,11 @@ const CONFIG = {
   apiKey: process.env.DASHBOARD_API_KEY || 'dein-geheimer-api-key-hier'
 };
 
+// IPs die von der Statistik ausgeschlossen werden
+const EXCLUDED_IPS = [
+  '2a02:aa14:c47e:a80:c55f:d185:f384:9745'
+];
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -51,10 +56,15 @@ function parseLogLine(line) {
   // Combined Log Format: IP - - [timestamp] "request" status bytes "referrer" "user-agent"
   const regex = /^(\S+) \S+ \S+ \[([^\]]+)\] "([^"]*)" (\d+) (\d+|-) "([^"]*)" "([^"]*)"/;
   const match = line.match(regex);
-  
+
   if (!match) return null;
-  
+
   const [, ip, timestamp, request, status, bytes, referrer, userAgent] = match;
+
+  // IP-Ausschluss prüfen
+  if (EXCLUDED_IPS.some(excludedIp => ip.startsWith(excludedIp.split(':').slice(0, 4).join(':')) || ip === excludedIp)) {
+    return null;
+  }
   
   // Parse timestamp: 31/Jan/2025:10:30:45 +0100
   const dateParts = timestamp.match(/(\d+)\/(\w+)\/(\d+):(\d+):(\d+):(\d+)/);
