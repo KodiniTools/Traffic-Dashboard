@@ -32,7 +32,7 @@ const periods = [
 
 // API Fetch Helper
 async function fetchApi(endpoint) {
-  const response = await fetch(`/api${endpoint}`, {
+ const response = await fetch(`/traffic-dashboard/api${endpoint}`, {
     headers: {
       'X-API-Key': apiKey.value
     }

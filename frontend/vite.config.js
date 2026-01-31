@@ -3,12 +3,14 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  base: '/traffic-dashboard/',
   server: {
     port: 5173,
     proxy: {
-      '/api': {
+      '/traffic-dashboard/api': {
         target: 'http://localhost:3847',
-        changeOrigin: true
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/traffic-dashboard/, '')
       }
     }
   },
