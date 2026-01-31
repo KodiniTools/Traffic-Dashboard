@@ -121,8 +121,8 @@ async function readLogFiles(daysBack = 1) {
     console.error('Fehler beim Lesen der aktuellen Log-Datei:', err.message);
   }
   
-  // Rotierte Log-Dateien (.1 und .gz)
-  for (let i = 1; i <= Math.min(daysBack, 14); i++) {
+  // Rotierte Log-Dateien (.1 und .gz) - unterstützt bis zu 365 Tage
+  for (let i = 1; i <= Math.min(daysBack, 365); i++) {
     try {
       const logFile = i === 1 
         ? `${CONFIG.logPath}.1`
@@ -309,10 +309,49 @@ app.get('/api/stats/month', async (req, res) => {
   }
 });
 
-// Benutzerdefinierter Zeitraum
+// Letzte 3 Monate (90 Tage)
+app.get('/api/stats/quarter', async (req, res) => {
+  try {
+    const entries = await readLogFiles(90);
+    const stats = aggregateStats(entries);
+    stats.period = 'quarter';
+    res.json(stats);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Letzte 6 Monate (180 Tage)
+app.get('/api/stats/halfyear', async (req, res) => {
+  try {
+    const entries = await readLogFiles(180);
+    const stats = aggregateStats(entries);
+    stats.period = 'halfyear';
+    res.json(stats);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Letztes Jahr (365 Tage)
+app.get('/api/stats/year', async (req, res) => {
+  try {
+    const entries = await readLogFiles(365);
+    const stats = aggregateStats(entries);
+    stats.period = 'year';
+    res.json(stats);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Benutzerdefinierter Zeitraum (max 365 Tage)
 app.get('/api/stats/custom/:days', async (req, res) => {
   try {
-    const days = Math.min(parseInt(req.params.days) || 1, 30);
+    const days = Math.min(parseInt(req.params.days) || 1, 365);
     const entries = await readLogFiles(days);
     const stats = aggregateStats(entries);
     stats.period = `${days} days`;
