@@ -25,6 +25,46 @@ const EXCLUDED_IPS = [
   '2a02:aa14:c47e:a80:c55f:d185:f384:9745'
 ];
 
+// Pfade die aus Top Pages ausgeschlossen werden (Scanner/Probes)
+const EXCLUDED_PATH_PATTERNS = [
+  /\/wp-admin\//i,
+  /\/wp-login\.php/i,
+  /\/wp-config\.php/i,
+  /\/wordpress\//i,
+  /\/wp-includes\//i,
+  /\/wp-content\//i,
+  /\/xmlrpc\.php/i,
+  /\/\.env/i,
+  /\/\.git/i,
+  /\/phpmyadmin/i,
+  /\/admin\//i,
+  /\/setup-config\.php/i,
+];
+
+// Dateiendungen die keine echten Seitenbesuche sind (statische Assets)
+const EXCLUDED_EXTENSIONS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.avif',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.css', '.js', '.map',
+  '.xml', '.txt', '.json',
+  '.pdf', '.zip', '.gz',
+  '.mp4', '.webm', '.mp3', '.ogg',
+];
+
+// Prüft ob ein Pfad aus Top Pages ausgeschlossen werden soll
+function isExcludedFromTopPages(path) {
+  // Scanner/Probe-Pfade ausschließen
+  if (EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
+    return true;
+  }
+  // Statische Assets ausschließen (Dateiendung prüfen)
+  const lowerPath = path.toLowerCase().split('?')[0];
+  if (EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))) {
+    return true;
+  }
+  return false;
+}
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -190,10 +230,12 @@ function aggregateStats(entries) {
     const statusGroup = `${Math.floor(entry.status / 100)}xx`;
     stats.statusCodes[statusGroup] = (stats.statusCodes[statusGroup] || 0) + 1;
     
-    // Top Pages (nur für Menschen)
+    // Top Pages (nur echte Seitenbesuche von Menschen)
     if (!entry.isBot && entry.path !== '-') {
       const cleanPath = entry.path.split('?')[0]; // Query-Parameter entfernen
-      stats.topPages[cleanPath] = (stats.topPages[cleanPath] || 0) + 1;
+      if (!isExcludedFromTopPages(cleanPath)) {
+        stats.topPages[cleanPath] = (stats.topPages[cleanPath] || 0) + 1;
+      }
     }
     
     // Top Referrers
