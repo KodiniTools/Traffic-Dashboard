@@ -54,8 +54,8 @@ const chartData = computed(() => {
         pointHoverRadius: 6
       },
       {
-        label: 'Human Requests',
-        data: sortedEntries.map(([, stats]) => stats.human),
+        label: 'Seitenaufrufe',
+        data: sortedEntries.map(([, stats]) => stats.pageViews || stats.human),
         borderColor: '#22c55e',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
         fill: true,

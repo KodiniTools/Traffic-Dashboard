@@ -82,13 +82,19 @@ const authenticate = (req, res, next) => {
 // Alle API-Routen authentifizieren
 app.use('/api', authenticate);
 
-// Bot-Patterns
-const BOT_PATTERNS = /bot|crawler|spider|googlebot|bingbot|semrush|ahrefs|yandex|baidu|facebook|twitter|telegram|whatsapp|slurp|duckduck|sogou|exabot|facebot|ia_archiver/i;
+// Bot-Patterns (erweitert: Scanner, AI-Crawler, CLI-Tools, Monitoring, SEO-Tools)
+const BOT_PATTERNS = /bot|crawler|spider|googlebot|bingbot|semrush|ahrefs|yandex|baidu|facebook|twitter|telegram|whatsapp|slurp|duckduck|sogou|exabot|facebot|ia_archiver|curl|wget|python-requests|python-urllib|httpie|postman|axios|node-fetch|go-http-client|java\/|libwww-perl|ruby|php\/|scrapy|puppeteer|headlesschrome|phantomjs|selenium|playwright|lighthouse|pagespeed|uptimerobot|pingdom|datadog|newrelic|statuspage|monitoring|scanner|scraper|nutch|mj12bot|dotbot|rogerbot|bytespider|bytedance|petalbot|amazonbot|claudebot|chatgpt-user|gptbot|anthropic-ai|cohere-ai|applebot|archive\.org|webzip|httrack|offline.explorer|sitechecker|nessus|nikto|sqlmap|masscan|zgrab|censys|shodan/i;
 
 const KNOWN_BOTS = [
   'googlebot', 'bingbot', 'semrush', 'ahrefs', 'yandex', 'baidu',
   'facebook', 'twitter', 'telegram', 'whatsapp', 'duckduckbot',
-  'slurp', 'sogou', 'exabot', 'facebot', 'applebot', 'bot', 'crawler', 'spider'
+  'slurp', 'sogou', 'exabot', 'facebot', 'applebot',
+  'bytespider', 'petalbot', 'amazonbot', 'mj12bot', 'dotbot',
+  'gptbot', 'chatgpt-user', 'claudebot', 'anthropic-ai', 'cohere-ai',
+  'uptimerobot', 'pingdom', 'datadog', 'newrelic',
+  'curl', 'wget', 'python', 'scrapy', 'puppeteer', 'lighthouse',
+  'nikto', 'sqlmap', 'nessus', 'zgrab', 'censys', 'shodan',
+  'bot', 'crawler', 'spider'
 ];
 
 // Nginx Combined Log Format Parser
@@ -125,30 +131,50 @@ function parseLogLine(line) {
   const method = requestParts[0] || '-';
   const path = requestParts[1] || '-';
   
-  // Bot erkennen
-  const isBot = BOT_PATTERNS.test(userAgent);
+  // Bot erkennen (erweitert)
+  let isBot = BOT_PATTERNS.test(userAgent);
   let botName = null;
-  if (isBot) {
+
+  // Leerer oder fehlender User-Agent = fast immer Bot/Script
+  if (!userAgent || userAgent === '-' || userAgent.trim() === '') {
+    isBot = true;
+    botName = 'empty-ua';
+  }
+
+  // Scanner-Probe-Erkennung: Requests auf verdächtige Pfade sind Bots,
+  // auch wenn der User-Agent gefälscht ist
+  if (!isBot && EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
+    isBot = true;
+    botName = 'scanner';
+  }
+
+  // Bot-Name aus User-Agent extrahieren
+  if (isBot && !botName) {
+    const lowerUA = userAgent.toLowerCase();
     for (const bot of KNOWN_BOTS) {
-      if (userAgent.toLowerCase().includes(bot)) {
+      if (lowerUA.includes(bot)) {
         botName = bot;
         break;
       }
     }
     if (!botName) botName = 'other';
   }
-  
+
+  const statusCode = parseInt(status);
+
   return {
     ip,
     date,
     method,
     path,
-    status: parseInt(status),
+    status: statusCode,
     bytes: bytes === '-' ? 0 : parseInt(bytes),
     referrer,
     userAgent,
     isBot,
-    botName
+    botName,
+    // Echte Seitenanfrage: GET + nicht-Bot + kein statisches Asset
+    isPageView: method === 'GET' && !isBot && !isExcludedFromTopPages(path) && path !== '-'
   };
 }
 
@@ -212,10 +238,11 @@ async function readLogFiles(daysBack = 1) {
 function aggregateStats(entries) {
   const stats = {
     totalRequests: entries.length,
-    uniqueVisitors: new Set(entries.filter(e => !e.isBot).map(e => e.ip)).size,
+    uniqueVisitors: new Set(entries.filter(e => e.isPageView).map(e => e.ip)).size,
     totalBots: new Set(entries.filter(e => e.isBot).map(e => e.ip)).size,
     totalBytes: entries.reduce((sum, e) => sum + e.bytes, 0),
     humanRequests: entries.filter(e => !e.isBot).length,
+    humanPageViews: entries.filter(e => e.isPageView).length,
     botRequests: entries.filter(e => e.isBot).length,
     statusCodes: {},
     topPages: {},
@@ -238,8 +265,8 @@ function aggregateStats(entries) {
       }
     }
     
-    // Top Referrers
-    if (entry.referrer && entry.referrer !== '-' && !entry.referrer.includes('kodinitools.com')) {
+    // Top Referrers (nur von echten Seitenbesuchen, keine Bots)
+    if (!entry.isBot && entry.referrer && entry.referrer !== '-' && !entry.referrer.includes('kodinitools.com')) {
       try {
         const refUrl = new URL(entry.referrer);
         const refDomain = refUrl.hostname;
@@ -248,22 +275,27 @@ function aggregateStats(entries) {
         // Ungültige URL ignorieren
       }
     }
-    
-    // Requests pro Stunde
-    const hour = entry.date.getHours();
-    stats.requestsByHour[hour] = (stats.requestsByHour[hour] || 0) + 1;
-    
+
+    // Requests pro Stunde (nur menschliche Seitenaufrufe)
+    if (entry.isPageView) {
+      const hour = entry.date.getHours();
+      stats.requestsByHour[hour] = (stats.requestsByHour[hour] || 0) + 1;
+    }
+
     // Requests pro Tag
     const day = entry.date.toISOString().split('T')[0];
     if (!stats.requestsByDay[day]) {
-      stats.requestsByDay[day] = { total: 0, human: 0, bot: 0, uniqueIps: new Set() };
+      stats.requestsByDay[day] = { total: 0, human: 0, bot: 0, pageViews: 0, uniqueIps: new Set() };
     }
     stats.requestsByDay[day].total++;
-    stats.requestsByDay[day].uniqueIps.add(entry.ip);
     if (entry.isBot) {
       stats.requestsByDay[day].bot++;
     } else {
       stats.requestsByDay[day].human++;
+      if (entry.isPageView) {
+        stats.requestsByDay[day].pageViews++;
+        stats.requestsByDay[day].uniqueIps.add(entry.ip);
+      }
     }
     
     // Bot Statistiken
@@ -424,7 +456,8 @@ app.get('/api/stats/live', async (req, res) => {
     const stats = {
       lastHour: {
         requests: recentEntries.length,
-        uniqueVisitors: new Set(recentEntries.filter(e => !e.isBot).map(e => e.ip)).size,
+        uniqueVisitors: new Set(recentEntries.filter(e => e.isPageView).map(e => e.ip)).size,
+        pageViews: recentEntries.filter(e => e.isPageView).length,
         bots: recentEntries.filter(e => e.isBot).length,
         bytes: recentEntries.reduce((sum, e) => sum + e.bytes, 0)
       },

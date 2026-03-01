@@ -262,10 +262,10 @@ const lastUpdated = computed(() => {
             icon="users"
             color="blue"
           />
-          <StatsCard 
-            title="Requests"
-            :value="stats.humanRequests.toLocaleString('de-DE')"
-            :subtitle="`${humanPercentage}% Menschen`"
+          <StatsCard
+            title="Seitenaufrufe"
+            :value="(stats.humanPageViews || 0).toLocaleString('de-DE')"
+            :subtitle="`${stats.humanRequests.toLocaleString('de-DE')} Requests gesamt`"
             icon="activity"
             color="green"
           />
@@ -291,7 +291,7 @@ const lastUpdated = computed(() => {
             LIVE
           </div>
           <div class="live-stats">
-            <span><strong>{{ liveStats.lastHour.requests }}</strong> Requests</span>
+            <span><strong>{{ liveStats.lastHour.pageViews || 0 }}</strong> Seitenaufrufe</span>
             <span><strong>{{ liveStats.lastHour.uniqueVisitors }}</strong> Besucher</span>
             <span><strong>{{ liveStats.lastHour.bots }}</strong> Bots</span>
             <span><strong>{{ liveStats.lastHour.bytesFormatted }}</strong> Traffic</span>
