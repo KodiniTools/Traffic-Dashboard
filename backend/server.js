@@ -39,6 +39,27 @@ const EXCLUDED_PATH_PATTERNS = [
   /\/phpmyadmin/i,
   /\/admin\//i,
   /\/setup-config\.php/i,
+  // Alle .php-Anfragen sind Scanner (diese Seite nutzt kein PHP)
+  /\.php$/i,
+  /\.php\?/i,
+  // Weitere Scanner/Exploit-Pfade
+  /\/cgi-bin\//i,
+  /\/\.well-known\/security/i,
+  /\/\.ds_store/i,
+  /\/\.htaccess/i,
+  /\/\.htpasswd/i,
+  /\/shell/i,
+  /\/eval-stdin/i,
+  /\/vendor\//i,
+  /\/telescope\//i,
+  /\/debug\//i,
+  /\/console\//i,
+  /\/config\.(json|yml|yaml|bak|old)/i,
+  /\/backup/i,
+  /\/db\//i,
+  /\/database/i,
+  /\/dump/i,
+  /\/sql/i,
 ];
 
 // Dateiendungen die keine echten Seitenbesuche sind (statische Assets)
