@@ -2,18 +2,22 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  pages: Object
+  pages: Object,
+  pagesDetailed: Array
 })
 
 const pageList = computed(() => {
+  if (props.pagesDetailed && props.pagesDetailed.length > 0) {
+    return props.pagesDetailed.slice(0, 15)
+  }
   if (!props.pages) return []
   return Object.entries(props.pages)
-    .map(([path, count]) => ({ path, count }))
+    .map(([path, count]) => ({ path, views: count, uniqueVisitors: 0 }))
     .slice(0, 15)
 })
 
 const maxCount = computed(() => {
-  return Math.max(...pageList.value.map(p => p.count), 1)
+  return Math.max(...pageList.value.map(p => p.views), 1)
 })
 
 function formatPath(path) {
@@ -48,13 +52,16 @@ function formatPath(path) {
         <div class="page-info">
           <span class="page-path" :title="page.path">{{ formatPath(page.path) }}</span>
           <div class="page-bar-container">
-            <div 
+            <div
               class="page-bar"
-              :style="{ width: `${(page.count / maxCount) * 100}%` }"
+              :style="{ width: `${(page.views / maxCount) * 100}%` }"
             ></div>
           </div>
         </div>
-        <span class="page-count">{{ page.count.toLocaleString('de-DE') }}</span>
+        <div class="page-metrics">
+          <span class="page-count">{{ page.views.toLocaleString('de-DE') }}</span>
+          <span v-if="page.uniqueVisitors" class="page-unique" :title="'Unique Visitors'">{{ page.uniqueVisitors.toLocaleString('de-DE') }} UV</span>
+        </div>
       </div>
     </div>
     
@@ -153,11 +160,24 @@ h3 svg {
   transition: width 0.3s ease;
 }
 
+.page-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
+  flex-shrink: 0;
+}
+
 .page-count {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   color: var(--text-secondary);
-  flex-shrink: 0;
+}
+
+.page-unique {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
 }
 
 .no-data {

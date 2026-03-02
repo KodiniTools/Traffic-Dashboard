@@ -6,6 +6,10 @@ import BotStats from './components/BotStats.vue'
 import TopPages from './components/TopPages.vue'
 import LiveFeed from './components/LiveFeed.vue'
 import ReferrerStats from './components/ReferrerStats.vue'
+import SessionStats from './components/SessionStats.vue'
+import EntryExitPages from './components/EntryExitPages.vue'
+import DeviceStats from './components/DeviceStats.vue'
+import ErrorPages from './components/ErrorPages.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -362,11 +366,33 @@ const lastUpdated = computed(() => {
           </div>
         </div>
 
+        <!-- Session & Besucher-Analyse -->
+        <div class="analytics-row">
+          <SessionStats
+            :sessionStats="stats.sessionStats"
+            :visitorTypes="stats.visitorTypes"
+          />
+          <DeviceStats
+            :devices="stats.devices"
+            :browsers="stats.browsers"
+            :osSystems="stats.osSystems"
+          />
+        </div>
+
         <!-- Data Grids -->
         <div class="data-grid">
-          <TopPages :pages="stats.topPages" />
+          <TopPages :pages="stats.topPages" :pagesDetailed="stats.topPagesDetailed" />
+          <EntryExitPages
+            :entryPages="stats.entryPages"
+            :exitPages="stats.exitPages"
+            :visitorFlow="stats.visitorFlow"
+          />
+        </div>
+
+        <div class="data-grid">
           <BotStats :bots="stats.botStats" />
           <ReferrerStats :referrers="stats.topReferrers" />
+          <ErrorPages :errorPages="stats.errorPages" />
         </div>
 
         <!-- Live Feed -->
@@ -841,6 +867,14 @@ body {
 
 .chart-card.wide {
   grid-column: 1 / -1;
+}
+
+/* Analytics Row */
+.analytics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
 }
 
 /* Data Grid */
