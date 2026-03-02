@@ -15,6 +15,7 @@ const authError = ref('')
 // Daten
 const stats = ref(null)
 const liveStats = ref(null)
+const todayOverview = ref(null)
 const loading = ref(false)
 const error = ref(null)
 const selectedPeriod = ref('week')
@@ -82,6 +83,15 @@ async function loadStats() {
   }
 }
 
+// Heute-Übersicht laden
+async function loadTodayOverview() {
+  try {
+    todayOverview.value = await fetchApi('/stats/today-overview')
+  } catch (err) {
+    console.error('Heute-Übersicht Fehler:', err)
+  }
+}
+
 // Live-Daten laden
 async function loadLive() {
   try {
@@ -94,16 +104,18 @@ async function loadLive() {
 // Auto-Refresh starten
 function startAutoRefresh() {
   // Hauptdaten alle 5 Minuten
-  refreshInterval = setInterval(loadStats, 5 * 60 * 1000)
+  refreshInterval = setInterval(() => { loadStats(); loadTodayOverview() }, 5 * 60 * 1000)
   // Live-Daten alle 30 Sekunden
   liveInterval = setInterval(loadLive, 30 * 1000)
   loadLive()
+  loadTodayOverview()
 }
 
 // Zeitraum wechseln
 function changePeriod(period) {
   selectedPeriod.value = period
   loadStats()
+  loadTodayOverview()
 }
 
 // Logout
@@ -113,6 +125,7 @@ function logout() {
   isAuthenticated.value = false
   stats.value = null
   liveStats.value = null
+  todayOverview.value = null
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
 }
@@ -135,6 +148,15 @@ onUnmounted(() => {
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
 })
+
+// Hilfsfunktion: Zürcher Datum formatieren
+function formatZurichDate(dateStr) {
+  if (!dateStr) return ''
+  const [y, m, d] = dateStr.split('-')
+  const weekdays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+  const date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d))
+  return `${weekdays[date.getDay()]}, ${d}.${m}.${y}`
+}
 
 // Computed
 const humanPercentage = computed(() => {
@@ -254,6 +276,39 @@ const lastUpdated = computed(() => {
 
       <!-- Stats Content -->
       <template v-else-if="stats">
+        <!-- Heute Übersicht (immer sichtbar, Zürcher Zeit 00:00-24:00) -->
+        <div v-if="todayOverview" class="today-overview">
+          <div class="today-header">
+            <div class="today-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12,6 12,12 16,14"/>
+              </svg>
+              <h2>Heute</h2>
+              <span class="today-date">{{ formatZurichDate(todayOverview.zurichDate) }}</span>
+            </div>
+            <span class="today-timezone">Zürich (MEZ/MESZ)</span>
+          </div>
+          <div class="today-stats">
+            <div class="today-stat">
+              <span class="today-stat-value">{{ todayOverview.visitors.toLocaleString('de-CH') }}</span>
+              <span class="today-stat-label">Besucher</span>
+            </div>
+            <div class="today-stat">
+              <span class="today-stat-value">{{ todayOverview.pageViews.toLocaleString('de-CH') }}</span>
+              <span class="today-stat-label">Seitenaufrufe</span>
+            </div>
+            <div class="today-stat">
+              <span class="today-stat-value">{{ todayOverview.botRequests.toLocaleString('de-CH') }}</span>
+              <span class="today-stat-label">Bot Requests</span>
+            </div>
+            <div class="today-stat">
+              <span class="today-stat-value">{{ todayOverview.totalBytesFormatted }}</span>
+              <span class="today-stat-label">Traffic</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Stats Cards -->
         <div class="stats-grid">
           <StatsCard 
@@ -629,6 +684,79 @@ body {
   cursor: pointer;
 }
 
+/* Heute Übersicht */
+.today-overview {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(6, 182, 212, 0.08) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.today-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.today-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.today-title svg {
+  width: 22px;
+  height: 22px;
+  color: var(--accent-blue);
+}
+
+.today-title h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.today-date {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  margin-left: 0.25rem;
+}
+
+.today-timezone {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.today-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.today-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.today-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.today-stat-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* Stats Grid */
 .stats-grid {
   display: grid;
@@ -759,11 +887,26 @@ body {
     flex-wrap: wrap;
     gap: 0.75rem;
   }
-  
+
   .live-stats {
     gap: 1rem;
     font-size: 0.8rem;
     flex-wrap: wrap;
+  }
+
+  .today-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+
+  .today-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .today-stat-value {
+    font-size: 1.25rem;
   }
 }
 </style>
