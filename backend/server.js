@@ -20,6 +20,45 @@ const CONFIG = {
   apiKey: process.env.DASHBOARD_API_KEY || 'dein-geheimer-api-key-hier'
 };
 
+// Zürich (Schweiz) Zeitzone
+const TIMEZONE = 'Europe/Zurich';
+
+function getZurichDateString(date = new Date()) {
+  return date.toLocaleDateString('en-CA', { timeZone: TIMEZONE }); // 'YYYY-MM-DD'
+}
+
+function getZurichUtcOffsetMs(date) {
+  const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
+  const zurichStr = date.toLocaleString('en-US', { timeZone: TIMEZONE });
+  return new Date(zurichStr).getTime() - new Date(utcStr).getTime();
+}
+
+function zurichMidnight(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const utcMidnight = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  const offset = getZurichUtcOffsetMs(utcMidnight);
+  return new Date(utcMidnight.getTime() - offset);
+}
+
+// Heute 00:00 Zürich Zeit
+function getStartOfTodayZurich() {
+  return zurichMidnight(getZurichDateString());
+}
+
+// Montag 00:00 der aktuellen Woche, Zürich Zeit
+function getStartOfWeekZurich() {
+  const todayStr = getZurichDateString();
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const tempDate = new Date(y, m - 1, d);
+  const dow = tempDate.getDay(); // 0=So, 1=Mo, ...
+  const daysFromMonday = dow === 0 ? 6 : dow - 1;
+  const mondayDate = new Date(y, m - 1, d - daysFromMonday);
+  const mondayY = mondayDate.getFullYear();
+  const mondayM = String(mondayDate.getMonth() + 1).padStart(2, '0');
+  const mondayD = String(mondayDate.getDate()).padStart(2, '0');
+  return zurichMidnight(`${mondayY}-${mondayM}-${mondayD}`);
+}
+
 // IPs die von der Statistik ausgeschlossen werden
 const EXCLUDED_IPS = [
   '2a02:aa14:c47e:a80:c55f:d185:f384:9745'
@@ -200,10 +239,20 @@ function parseLogLine(line) {
 }
 
 // Log-Dateien lesen (mit gzip Unterstützung)
-async function readLogFiles(daysBack = 1) {
+// Akzeptiert entweder Anzahl Tage (Number) oder ein Start-Datum (Date) als Cutoff
+async function readLogFiles(daysBackOrSinceDate = 1) {
   const entries = [];
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+  let cutoffDate;
+  let daysBack;
+
+  if (daysBackOrSinceDate instanceof Date) {
+    cutoffDate = daysBackOrSinceDate;
+    daysBack = Math.ceil((Date.now() - cutoffDate.getTime()) / 86400000) + 1;
+  } else {
+    daysBack = daysBackOrSinceDate;
+    cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+  }
   
   // Aktuelle Log-Datei
   try {
@@ -303,8 +352,8 @@ function aggregateStats(entries) {
       stats.requestsByHour[hour] = (stats.requestsByHour[hour] || 0) + 1;
     }
 
-    // Requests pro Tag
-    const day = entry.date.toISOString().split('T')[0];
+    // Requests pro Tag (Zürich Zeit)
+    const day = getZurichDateString(entry.date);
     if (!stats.requestsByDay[day]) {
       stats.requestsByDay[day] = { total: 0, human: 0, bot: 0, pageViews: 0, uniqueIps: new Set() };
     }
@@ -362,10 +411,11 @@ function formatBytes(bytes) {
 
 // API Endpunkte
 
-// Heute
+// Heute (00:00 - 24:00 Zürich Zeit)
 app.get('/api/stats/today', async (req, res) => {
   try {
-    const entries = await readLogFiles(1);
+    const todayStart = getStartOfTodayZurich();
+    const entries = await readLogFiles(todayStart);
     const stats = aggregateStats(entries);
     stats.period = 'today';
     res.json(stats);
@@ -375,10 +425,11 @@ app.get('/api/stats/today', async (req, res) => {
   }
 });
 
-// Letzte 7 Tage
+// Diese Woche (Montag 00:00 - Sonntag 24:00, Zürich Zeit)
 app.get('/api/stats/week', async (req, res) => {
   try {
-    const entries = await readLogFiles(7);
+    const weekStart = getStartOfWeekZurich();
+    const entries = await readLogFiles(weekStart);
     const stats = aggregateStats(entries);
     stats.period = 'week';
     res.json(stats);
