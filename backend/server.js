@@ -152,6 +152,67 @@ function filterEntriesThisWeek(entries) {
   return entries.filter(e => weekDates.has(getZurichDateString(e.date)));
 }
 
+// Geräte-Typ aus User-Agent erkennen
+function detectDevice(ua) {
+  if (!ua) return 'Unknown';
+  if (/tablet|ipad|playbook|silk/i.test(ua)) return 'Tablet';
+  if (/mobile|iphone|ipod|android.*mobile|windows phone|blackberry/i.test(ua)) return 'Mobile';
+  return 'Desktop';
+}
+
+// Browser aus User-Agent erkennen
+function detectBrowser(ua) {
+  if (!ua) return 'Unknown';
+  if (/edg\//i.test(ua)) return 'Edge';
+  if (/opr\/|opera/i.test(ua)) return 'Opera';
+  if (/chrome/i.test(ua) && !/edg|opr/i.test(ua)) return 'Chrome';
+  if (/safari/i.test(ua) && !/chrome|chromium/i.test(ua)) return 'Safari';
+  if (/firefox/i.test(ua)) return 'Firefox';
+  if (/msie|trident/i.test(ua)) return 'IE';
+  return 'Other';
+}
+
+// Betriebssystem aus User-Agent erkennen
+function detectOS(ua) {
+  if (!ua) return 'Unknown';
+  if (/iphone|ipad|ipod/i.test(ua)) return 'iOS';
+  if (/android/i.test(ua)) return 'Android';
+  if (/windows/i.test(ua)) return 'Windows';
+  if (/macintosh|mac os/i.test(ua)) return 'macOS';
+  if (/linux/i.test(ua)) return 'Linux';
+  if (/chromeos/i.test(ua)) return 'ChromeOS';
+  return 'Other';
+}
+
+// Sessions aus Einträgen aufbauen (30 Min Timeout)
+function buildSessions(entries) {
+  const SESSION_TIMEOUT = 30 * 60 * 1000;
+  const humanEntries = entries.filter(e => e.isPageView);
+  if (humanEntries.length === 0) return [];
+
+  const byIp = {};
+  for (const entry of humanEntries) {
+    if (!byIp[entry.ip]) byIp[entry.ip] = [];
+    byIp[entry.ip].push(entry);
+  }
+
+  const sessions = [];
+  for (const ipEntries of Object.values(byIp)) {
+    ipEntries.sort((a, b) => a.date - b.date);
+    let session = [ipEntries[0]];
+    for (let i = 1; i < ipEntries.length; i++) {
+      if (ipEntries[i].date - ipEntries[i - 1].date > SESSION_TIMEOUT) {
+        sessions.push(session);
+        session = [ipEntries[i]];
+      } else {
+        session.push(ipEntries[i]);
+      }
+    }
+    sessions.push(session);
+  }
+  return sessions;
+}
+
 // Prüft ob ein Pfad aus Top Pages ausgeschlossen werden soll
 function isExcludedFromTopPages(path) {
   // Scanner/Probe-Pfade ausschließen
@@ -448,7 +509,129 @@ function aggregateStats(entries) {
   
   // Bytes formatieren
   stats.totalBytesFormatted = formatBytes(stats.totalBytes);
-  
+
+  // --- Erweiterte Analysen ---
+
+  // 1. Top Pages mit Unique Visitors
+  const pageIps = {};
+  for (const entry of entries) {
+    if (entry.isPageView) {
+      const cleanPath = entry.path.split('?')[0];
+      if (!isExcludedFromTopPages(cleanPath)) {
+        if (!pageIps[cleanPath]) pageIps[cleanPath] = new Set();
+        pageIps[cleanPath].add(entry.ip);
+      }
+    }
+  }
+  stats.topPagesDetailed = Object.entries(stats.topPages)
+    .map(([path, views]) => ({
+      path,
+      views,
+      uniqueVisitors: pageIps[path] ? pageIps[path].size : 0
+    }));
+
+  // 2. Session-Analyse
+  const sessions = buildSessions(entries);
+  const totalSessions = sessions.length;
+  const bounceSessions = sessions.filter(s => s.length === 1).length;
+  const totalPagesInSessions = sessions.reduce((sum, s) => sum + s.length, 0);
+
+  stats.sessionStats = {
+    totalSessions,
+    bounceRate: totalSessions > 0 ? Math.round((bounceSessions / totalSessions) * 100) : 0,
+    avgPagesPerSession: totalSessions > 0 ? parseFloat((totalPagesInSessions / totalSessions).toFixed(1)) : 0
+  };
+
+  // 3. Einstiegsseiten (Entry Pages)
+  const entryPages = {};
+  for (const session of sessions) {
+    const entryPath = session[0].path.split('?')[0];
+    entryPages[entryPath] = (entryPages[entryPath] || 0) + 1;
+  }
+  stats.entryPages = Object.entries(entryPages)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([path, count]) => ({ path, count }));
+
+  // 4. Ausstiegsseiten (Exit Pages)
+  const exitPages = {};
+  for (const session of sessions) {
+    const exitPath = session[session.length - 1].path.split('?')[0];
+    exitPages[exitPath] = (exitPages[exitPath] || 0) + 1;
+  }
+  stats.exitPages = Object.entries(exitPages)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([path, count]) => ({ path, count }));
+
+  // 5. Besucher-Flow (häufigste Seitenübergänge)
+  const transitions = {};
+  for (const session of sessions) {
+    for (let i = 0; i < session.length - 1; i++) {
+      const from = session[i].path.split('?')[0];
+      const to = session[i + 1].path.split('?')[0];
+      if (from !== to) {
+        const key = `${from} → ${to}`;
+        transitions[key] = (transitions[key] || 0) + 1;
+      }
+    }
+  }
+  stats.visitorFlow = Object.entries(transitions)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([transition, count]) => ({ transition, count }));
+
+  // 6. Neue vs. wiederkehrende Besucher (innerhalb des Zeitraums)
+  const ipSessionCounts = {};
+  for (const session of sessions) {
+    const ip = session[0].ip;
+    ipSessionCounts[ip] = (ipSessionCounts[ip] || 0) + 1;
+  }
+  const singleVisitIps = Object.values(ipSessionCounts).filter(c => c === 1).length;
+  const returningIps = Object.values(ipSessionCounts).filter(c => c > 1).length;
+  const totalUniqueIps = Object.keys(ipSessionCounts).length;
+  stats.visitorTypes = {
+    newVisitors: singleVisitIps,
+    returningVisitors: returningIps,
+    newPercent: totalUniqueIps > 0 ? Math.round((singleVisitIps / totalUniqueIps) * 100) : 0,
+    returningPercent: totalUniqueIps > 0 ? Math.round((returningIps / totalUniqueIps) * 100) : 0
+  };
+
+  // 7. Geräte-Typen
+  const devices = {};
+  const browsers = {};
+  const osSystems = {};
+  const humanEntries = entries.filter(e => e.isPageView);
+  const uniqueHumanIps = new Set();
+  for (const entry of humanEntries) {
+    if (uniqueHumanIps.has(entry.ip)) continue;
+    uniqueHumanIps.add(entry.ip);
+    const device = detectDevice(entry.userAgent);
+    const browser = detectBrowser(entry.userAgent);
+    const os = detectOS(entry.userAgent);
+    devices[device] = (devices[device] || 0) + 1;
+    browsers[browser] = (browsers[browser] || 0) + 1;
+    osSystems[os] = (osSystems[os] || 0) + 1;
+  }
+
+  const sortObj = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+  stats.devices = sortObj(devices);
+  stats.browsers = sortObj(browsers);
+  stats.osSystems = sortObj(osSystems);
+
+  // 8. HTTP-Fehler (404s)
+  const errorPages = {};
+  for (const entry of entries) {
+    if (entry.status === 404 && !entry.isBot) {
+      const cleanPath = entry.path.split('?')[0];
+      errorPages[cleanPath] = (errorPages[cleanPath] || 0) + 1;
+    }
+  }
+  stats.errorPages = Object.entries(errorPages)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([path, count]) => ({ path, count }));
+
   return stats;
 }
 
