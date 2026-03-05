@@ -13,6 +13,8 @@ defineProps({
 const icons = {
   users: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>`,
   activity: `<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>`,
+  session: `<circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/>`,
+  returning: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 4v6h-6"/><path d="M20.49 15A9 9 0 115.64 5.64L23 10"/>`,
   bot: `<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h0M16 16h0"/>`,
   download: `<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>`
 }
@@ -54,6 +56,8 @@ const icons = {
 .color-green::before { background: var(--accent-green); }
 .color-orange::before { background: var(--accent-orange); }
 .color-purple::before { background: var(--accent-purple); }
+.color-cyan::before { background: var(--accent-cyan); }
+.color-teal::before { background: #14b8a6; }
 
 .card-header {
   display: flex;
@@ -82,6 +86,8 @@ const icons = {
 .color-green .card-icon { color: var(--accent-green); }
 .color-orange .card-icon { color: var(--accent-orange); }
 .color-purple .card-icon { color: var(--accent-purple); }
+.color-cyan .card-icon { color: var(--accent-cyan); }
+.color-teal .card-icon { color: #14b8a6; }
 
 .card-icon svg {
   width: 20px;

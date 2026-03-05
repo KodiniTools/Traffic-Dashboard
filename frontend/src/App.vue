@@ -303,6 +303,14 @@ const lastUpdated = computed(() => {
               <span class="today-stat-label">Seitenaufrufe</span>
             </div>
             <div class="today-stat">
+              <span class="today-stat-value">{{ (todayOverview.sessions || 0).toLocaleString('de-CH') }}</span>
+              <span class="today-stat-label">Sessions</span>
+            </div>
+            <div class="today-stat">
+              <span class="today-stat-value">{{ (todayOverview.newVisitors || 0).toLocaleString('de-CH') }} / {{ (todayOverview.returningVisitors || 0).toLocaleString('de-CH') }}</span>
+              <span class="today-stat-label">Neu / Wiederkehrend</span>
+            </div>
+            <div class="today-stat">
               <span class="today-stat-value">{{ todayOverview.botRequests.toLocaleString('de-CH') }}</span>
               <span class="today-stat-label">Bot Requests</span>
             </div>
@@ -315,7 +323,7 @@ const lastUpdated = computed(() => {
 
         <!-- Stats Cards -->
         <div class="stats-grid">
-          <StatsCard 
+          <StatsCard
             title="Besucher"
             :value="stats.uniqueVisitors.toLocaleString('de-DE')"
             icon="users"
@@ -328,14 +336,28 @@ const lastUpdated = computed(() => {
             icon="activity"
             color="green"
           />
-          <StatsCard 
+          <StatsCard
+            title="Sessions"
+            :value="(stats.sessionStats?.totalSessions || 0).toLocaleString('de-DE')"
+            :subtitle="`${stats.sessionStats?.bounceRate || 0}% Bounce Rate · ${stats.sessionStats?.avgPagesPerSession || 0} Seiten/Session`"
+            icon="session"
+            color="cyan"
+          />
+          <StatsCard
+            title="Neue vs. Wiederkehrend"
+            :value="`${stats.visitorTypes?.newVisitors || 0} / ${stats.visitorTypes?.returningVisitors || 0}`"
+            :subtitle="`${stats.visitorTypes?.newPercent || 0}% Neu · ${stats.visitorTypes?.returningPercent || 0}% Wiederkehrend`"
+            icon="returning"
+            color="teal"
+          />
+          <StatsCard
             title="Bot Requests"
             :value="stats.botRequests.toLocaleString('de-DE')"
             :subtitle="`${stats.totalBots} unique Bots`"
             icon="bot"
             color="orange"
           />
-          <StatsCard 
+          <StatsCard
             title="Traffic"
             :value="stats.totalBytesFormatted"
             icon="download"
@@ -759,7 +781,7 @@ body {
 
 .today-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 1.5rem;
 }
 
@@ -929,7 +951,7 @@ body {
   }
 
   .today-stats {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
   }
 
