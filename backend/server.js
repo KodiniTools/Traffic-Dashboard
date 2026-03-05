@@ -760,6 +760,28 @@ app.get('/api/stats/today-overview', async (req, res) => {
   try {
     const todayStart = getStartOfTodayZurich();
     const todayEntries = await readLogFiles(todayStart);
+
+    // Sessions berechnen
+    const sessions = buildSessions(todayEntries);
+    const ipSessionCounts = {};
+    for (const session of sessions) {
+      const ip = session[0].ip;
+      ipSessionCounts[ip] = (ipSessionCounts[ip] || 0) + 1;
+    }
+    const totalUniqueIps = Object.keys(ipSessionCounts).length;
+    const singleVisitIps = Object.values(ipSessionCounts).filter(c => c === 1).length;
+    const returningIps = Object.values(ipSessionCounts).filter(c => c > 1).length;
+
+    // Einstiegs- und Ausstiegsseiten
+    const entryPages = {};
+    const exitPages = {};
+    for (const session of sessions) {
+      const entryPath = session[0].path.split('?')[0];
+      entryPages[entryPath] = (entryPages[entryPath] || 0) + 1;
+      const exitPath = session[session.length - 1].path.split('?')[0];
+      exitPages[exitPath] = (exitPages[exitPath] || 0) + 1;
+    }
+
     const stats = {
       zurichDate: getZurichToday(),
       visitors: new Set(todayEntries.filter(e => e.isPageView).map(e => e.ip)).size,
@@ -768,6 +790,11 @@ app.get('/api/stats/today-overview', async (req, res) => {
       botRequests: todayEntries.filter(e => e.isBot).length,
       totalBytes: todayEntries.reduce((sum, e) => sum + e.bytes, 0),
       totalBytesFormatted: formatBytes(todayEntries.reduce((sum, e) => sum + e.bytes, 0)),
+      sessions: sessions.length,
+      newVisitors: singleVisitIps,
+      returningVisitors: returningIps,
+      topEntryPage: Object.entries(entryPages).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
+      topExitPage: Object.entries(exitPages).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
       requestsByHour: {}
     };
 
