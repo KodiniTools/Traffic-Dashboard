@@ -60,8 +60,10 @@ function getStartOfWeekZurich() {
 }
 
 // IPs die von der Statistik ausgeschlossen werden
+// Vollständige IPs oder Präfixe (z.B. '31.10.151' matched alles in diesem Subnetz)
 const EXCLUDED_IPS = [
-  '2a02:aa14:c47e:a80:c55f:d185:f384:9745'
+  '2a02:aa14:c47e:a80',
+  '31.10.151'
 ];
 
 // Pfade die aus Top Pages ausgeschlossen werden (Scanner/Probes)
@@ -270,7 +272,7 @@ function parseLogLine(line) {
   const [, ip, timestamp, request, status, bytes, referrer, userAgent] = match;
 
   // IP-Ausschluss prüfen
-  if (EXCLUDED_IPS.some(excludedIp => ip.startsWith(excludedIp.split(':').slice(0, 4).join(':')) || ip === excludedIp)) {
+  if (EXCLUDED_IPS.some(excludedIp => ip.startsWith(excludedIp))) {
     return null;
   }
   
