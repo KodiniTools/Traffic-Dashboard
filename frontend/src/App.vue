@@ -10,6 +10,8 @@ import SessionStats from './components/SessionStats.vue'
 import EntryExitPages from './components/EntryExitPages.vue'
 import DeviceStats from './components/DeviceStats.vue'
 import ErrorPages from './components/ErrorPages.vue'
+import UserBehavior from './components/UserBehavior.vue'
+import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -398,6 +400,22 @@ const lastUpdated = computed(() => {
             :devices="stats.devices"
             :browsers="stats.browsers"
             :osSystems="stats.osSystems"
+          />
+        </div>
+
+        <!-- Nutzerverhalten & Bandwidth -->
+        <div class="analytics-row">
+          <UserBehavior
+            :sessionDuration="stats.sessionDuration"
+            :engagement="stats.engagement"
+            :sessionDepth="stats.sessionDepth"
+            :peakHoursHeatmap="stats.peakHoursHeatmap"
+          />
+          <BandwidthAnalysis
+            :bandwidthByPage="stats.bandwidthByPage"
+            :trafficByHour="stats.trafficByHour"
+            :totalBytesFormatted="stats.totalBytesFormatted"
+            :totalBytes="stats.totalBytes"
           />
         </div>
 

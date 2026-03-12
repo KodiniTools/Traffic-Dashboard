@@ -634,6 +634,123 @@ function aggregateStats(entries) {
     .slice(0, 15)
     .map(([path, count]) => ({ path, count }));
 
+  // 9. Session-Dauer Analyse
+  const sessionDurations = [];
+  const durationBuckets = { 'bounce': 0, '0-30s': 0, '30s-2m': 0, '2-5m': 0, '5-15m': 0, '15m+': 0 };
+  for (const session of sessions) {
+    if (session.length === 1) {
+      sessionDurations.push(0);
+      durationBuckets['bounce']++;
+    } else {
+      const duration = (session[session.length - 1].date - session[0].date) / 1000; // Sekunden
+      sessionDurations.push(duration);
+      if (duration <= 30) durationBuckets['0-30s']++;
+      else if (duration <= 120) durationBuckets['30s-2m']++;
+      else if (duration <= 300) durationBuckets['2-5m']++;
+      else if (duration <= 900) durationBuckets['5-15m']++;
+      else durationBuckets['15m+']++;
+    }
+  }
+  const avgDuration = sessionDurations.length > 0
+    ? Math.round(sessionDurations.reduce((a, b) => a + b, 0) / sessionDurations.length)
+    : 0;
+  const nonBounceDurations = sessionDurations.filter(d => d > 0);
+  const avgActiveDuration = nonBounceDurations.length > 0
+    ? Math.round(nonBounceDurations.reduce((a, b) => a + b, 0) / nonBounceDurations.length)
+    : 0;
+  stats.sessionDuration = {
+    avgSeconds: avgDuration,
+    avgActiveSeconds: avgActiveDuration,
+    avgFormatted: formatDuration(avgDuration),
+    avgActiveFormatted: formatDuration(avgActiveDuration),
+    buckets: durationBuckets
+  };
+
+  // 10. Peak Hours Heatmap (Wochentag × Stunde)
+  const heatmap = {};
+  for (let d = 0; d < 7; d++) {
+    heatmap[d] = {};
+    for (let h = 0; h < 24; h++) {
+      heatmap[d][h] = 0;
+    }
+  }
+  for (const entry of humanEntries) {
+    const zurichDate = new Date(entry.date.toLocaleString('en-US', { timeZone: TIMEZONE }));
+    const dow = zurichDate.getDay(); // 0=So
+    const hour = zurichDate.getHours();
+    heatmap[dow][hour]++;
+  }
+  stats.peakHoursHeatmap = heatmap;
+
+  // 11. Bandwidth pro Seite (Top 15)
+  const pageBandwidth = {};
+  for (const entry of entries) {
+    if (!entry.isBot && entry.bytes > 0) {
+      const cleanPath = entry.path.split('?')[0];
+      if (!isExcludedFromTopPages(cleanPath) && cleanPath !== '-') {
+        if (!pageBandwidth[cleanPath]) pageBandwidth[cleanPath] = { bytes: 0, requests: 0 };
+        pageBandwidth[cleanPath].bytes += entry.bytes;
+        pageBandwidth[cleanPath].requests++;
+      }
+    }
+  }
+  stats.bandwidthByPage = Object.entries(pageBandwidth)
+    .sort((a, b) => b[1].bytes - a[1].bytes)
+    .slice(0, 15)
+    .map(([path, data]) => ({
+      path,
+      bytes: data.bytes,
+      bytesFormatted: formatBytes(data.bytes),
+      requests: data.requests,
+      avgBytes: Math.round(data.bytes / data.requests),
+      avgBytesFormatted: formatBytes(Math.round(data.bytes / data.requests))
+    }));
+
+  // 12. Traffic pro Stunde (Bytes)
+  const trafficByHour = {};
+  for (let h = 0; h < 24; h++) trafficByHour[h] = { human: 0, bot: 0, total: 0 };
+  for (const entry of entries) {
+    const hour = getZurichHour(entry.date);
+    if (entry.isBot) {
+      trafficByHour[hour].bot += entry.bytes;
+    } else {
+      trafficByHour[hour].human += entry.bytes;
+    }
+    trafficByHour[hour].total += entry.bytes;
+  }
+  stats.trafficByHour = trafficByHour;
+
+  // 13. Engagement Score
+  const engagementScores = { low: 0, medium: 0, high: 0, veryHigh: 0 };
+  for (const session of sessions) {
+    const pageCount = session.length;
+    const duration = session.length > 1
+      ? (session[session.length - 1].date - session[0].date) / 1000
+      : 0;
+    // Score: Seiten * 2 + Dauer(min) * 3
+    const score = pageCount * 2 + (duration / 60) * 3;
+    if (score <= 2) engagementScores.low++;
+    else if (score <= 8) engagementScores.medium++;
+    else if (score <= 20) engagementScores.high++;
+    else engagementScores.veryHigh++;
+  }
+  stats.engagement = {
+    scores: engagementScores,
+    totalSessions: sessions.length
+  };
+
+  // 14. Session-Tiefe (wie viele Seiten pro Session)
+  const depthBuckets = { '1': 0, '2': 0, '3-4': 0, '5-9': 0, '10+': 0 };
+  for (const session of sessions) {
+    const len = session.length;
+    if (len === 1) depthBuckets['1']++;
+    else if (len === 2) depthBuckets['2']++;
+    else if (len <= 4) depthBuckets['3-4']++;
+    else if (len <= 9) depthBuckets['5-9']++;
+    else depthBuckets['10+']++;
+  }
+  stats.sessionDepth = depthBuckets;
+
   return stats;
 }
 
@@ -643,6 +760,14 @@ function formatBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatDuration(seconds) {
+  if (seconds === 0) return '0s';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
 }
 
 // API Endpunkte
