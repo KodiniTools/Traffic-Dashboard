@@ -4,7 +4,8 @@ import { computed } from 'vue'
 const props = defineProps({
   entryPages: Array,
   exitPages: Array,
-  visitorFlow: Array
+  visitorFlow: Array,
+  topJourneys: Array
 })
 
 function formatPath(path) {
@@ -56,9 +57,21 @@ const maxExit = computed(() => Math.max(...(props.exitPages || []).map(p => p.co
       </div>
     </div>
 
-    <!-- Besucher-Flow -->
+    <!-- Top Nutzer-Journeys (vollständige Pfade) -->
+    <div v-if="topJourneys && topJourneys.length > 0" class="section">
+      <h4>Top Nutzer-Pfade</h4>
+      <div class="journey-list">
+        <div v-for="(item, i) in topJourneys.slice(0, 7)" :key="'j-' + i" class="journey-row">
+          <span class="journey-rank">{{ i + 1 }}</span>
+          <span class="journey-path" :title="item.journey">{{ item.journey }}</span>
+          <span class="count">{{ item.count }}x</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Besucher-Flow (Seitenübergänge) -->
     <div v-if="visitorFlow && visitorFlow.length > 0" class="section">
-      <h4>Navigation-Pfade</h4>
+      <h4>Häufige Übergänge</h4>
       <div class="flow-list">
         <div v-for="flow in visitorFlow.slice(0, 5)" :key="flow.transition" class="flow-row">
           <span class="flow-path">{{ flow.transition }}</span>
@@ -104,13 +117,13 @@ h4 {
   margin-bottom: 0.5rem;
 }
 
-.page-list, .flow-list {
+.journey-list, .page-list, .flow-list {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
 }
 
-.page-row, .flow-row {
+.journey-row, .page-row, .flow-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -131,6 +144,25 @@ h4 {
 
 .path { width: 120px; flex-shrink: 0; }
 .flow-path { flex: 1; }
+
+.journey-rank {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.journey-path {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .bar-wrap {
   flex: 1;
