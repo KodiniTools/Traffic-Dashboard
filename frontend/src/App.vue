@@ -12,6 +12,7 @@ import DeviceStats from './components/DeviceStats.vue'
 import ErrorPages from './components/ErrorPages.vue'
 import UserBehavior from './components/UserBehavior.vue'
 import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
+import UTMStats from './components/UTMStats.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -426,6 +427,7 @@ const lastUpdated = computed(() => {
             :entryPages="stats.entryPages"
             :exitPages="stats.exitPages"
             :visitorFlow="stats.visitorFlow"
+            :topJourneys="stats.topJourneys"
           />
         </div>
 
@@ -433,6 +435,10 @@ const lastUpdated = computed(() => {
           <BotStats :bots="stats.botStats" />
           <ReferrerStats :referrers="stats.topReferrers" />
           <ErrorPages :errorPages="stats.errorPages" />
+        </div>
+
+        <div class="data-grid">
+          <UTMStats :utmStats="stats.utmStats" />
         </div>
 
         <!-- Live Feed -->

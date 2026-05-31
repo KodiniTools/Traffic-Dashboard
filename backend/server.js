@@ -336,6 +336,20 @@ function parseLogLine(line) {
 
   const statusCode = parseInt(status);
 
+  // UTM-Parameter aus Query-String extrahieren
+  let utmSource = null, utmMedium = null, utmCampaign = null, utmTerm = null, utmContent = null;
+  if (path.includes('?')) {
+    try {
+      const qs = path.split('?').slice(1).join('?');
+      const params = new URLSearchParams(qs);
+      utmSource = params.get('utm_source') || null;
+      utmMedium = params.get('utm_medium') || null;
+      utmCampaign = params.get('utm_campaign') || null;
+      utmTerm = params.get('utm_term') || null;
+      utmContent = params.get('utm_content') || null;
+    } catch (e) { /* ungültige Query-Strings ignorieren */ }
+  }
+
   return {
     ip,
     date,
@@ -347,6 +361,11 @@ function parseLogLine(line) {
     userAgent,
     isBot,
     botName,
+    utmSource,
+    utmMedium,
+    utmCampaign,
+    utmTerm,
+    utmContent,
     // Echte Seitenanfrage: GET + nicht-Bot + kein statisches Asset
     isPageView: method === 'GET' && !isBot && !isExcludedFromTopPages(path) && path !== '-'
   };
@@ -750,6 +769,46 @@ function aggregateStats(entries) {
     else depthBuckets['10+']++;
   }
   stats.sessionDepth = depthBuckets;
+
+  // 15. UTM-Parameter Tracking
+  const utmSources = {}, utmMediums = {}, utmCampaigns = {}, utmCombinations = {};
+  for (const entry of entries) {
+    if (entry.isPageView && entry.utmSource) {
+      utmSources[entry.utmSource] = (utmSources[entry.utmSource] || 0) + 1;
+      if (entry.utmMedium) {
+        utmMediums[entry.utmMedium] = (utmMediums[entry.utmMedium] || 0) + 1;
+      }
+      if (entry.utmCampaign) {
+        utmCampaigns[entry.utmCampaign] = (utmCampaigns[entry.utmCampaign] || 0) + 1;
+      }
+      const comboKey = [entry.utmSource, entry.utmMedium || '-', entry.utmCampaign || '-'].join(' / ');
+      utmCombinations[comboKey] = (utmCombinations[comboKey] || 0) + 1;
+    }
+  }
+  const sortEntries = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+  stats.utmStats = {
+    totalUtmVisits: Object.values(utmSources).reduce((a, b) => a + b, 0),
+    sources: sortEntries(utmSources),
+    mediums: sortEntries(utmMediums),
+    campaigns: sortEntries(utmCampaigns),
+    combinations: Object.entries(utmCombinations)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([combo, count]) => ({ combo, count }))
+  };
+
+  // 16. Top Nutzer-Pfade (vollständige Session-Journeys, mind. 2 Seiten)
+  const journeys = {};
+  for (const session of sessions) {
+    if (session.length >= 2) {
+      const journey = session.map(e => e.path.split('?')[0]).join(' → ');
+      journeys[journey] = (journeys[journey] || 0) + 1;
+    }
+  }
+  stats.topJourneys = Object.entries(journeys)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([journey, count]) => ({ journey, count }));
 
   return stats;
 }
