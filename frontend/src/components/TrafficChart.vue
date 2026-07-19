@@ -45,7 +45,7 @@ const chartData = computed(() => {
     datasets: [
       {
         label: 'Besucher',
-        data: sortedEntries.map(([, stats]) => stats.uniqueVisitors),
+        data: sortedEntries.map(([, stats]) => stats.uniqueVisitors ?? 0),
         borderColor: '#3b82f6',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         fill: true,
@@ -55,7 +55,7 @@ const chartData = computed(() => {
       },
       {
         label: 'Seitenaufrufe',
-        data: sortedEntries.map(([, stats]) => stats.pageViews || stats.human),
+        data: sortedEntries.map(([, stats]) => stats.pageViews ?? 0),
         borderColor: '#22c55e',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
         fill: true,
@@ -64,8 +64,18 @@ const chartData = computed(() => {
         pointHoverRadius: 6
       },
       {
+        label: 'Human Requests',
+        data: sortedEntries.map(([, stats]) => stats.human ?? 0),
+        borderColor: '#a855f7',
+        backgroundColor: 'rgba(168, 85, 247, 0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointHoverRadius: 6
+      },
+      {
         label: 'Bot Requests',
-        data: sortedEntries.map(([, stats]) => stats.bot),
+        data: sortedEntries.map(([, stats]) => stats.bot ?? 0),
         borderColor: '#f59e0b',
         backgroundColor: 'rgba(245, 158, 11, 0.1)',
         fill: true,
