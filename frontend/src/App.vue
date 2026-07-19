@@ -31,6 +31,17 @@ const selectedPeriod = ref('week')
 let refreshInterval = null
 let liveInterval = null
 
+// Angriffs-Erkennung fürs Banner: "Angriff" = heute wurden mind. so viele
+// Anfragen als Spike gefiltert UND die Bots übersteigen die echten Besucher
+// deutlich. Dann wird das Banner laut/pulsierend statt nur dezent-informativ.
+const ATTACK_MIN_FLAGGED = 200
+const isUnderAttack = computed(() => {
+  const s = todayOverview.value && todayOverview.value.spikeDetection
+  if (!s || !s.flaggedRequests) return false
+  const visitors = (todayOverview.value && todayOverview.value.visitors) || 0
+  return s.flaggedRequests >= ATTACK_MIN_FLAGGED && s.flaggedRequests > visitors * 3
+})
+
 const periods = [
   { value: 'today', label: 'Heute' },
   { value: 'week', label: 'Diese Woche' },
@@ -330,6 +341,7 @@ const lastUpdated = computed(() => {
         <div
           v-if="todayOverview && todayOverview.spikeDetection && todayOverview.spikeDetection.flaggedRequests > 0"
           class="spike-banner"
+          :class="{ 'spike-banner--attack': isUnderAttack }"
         >
           <svg class="spike-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -337,7 +349,10 @@ const lastUpdated = computed(() => {
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <div class="spike-banner-text">
-            <strong>{{ todayOverview.spikeDetection.flaggedRequests.toLocaleString('de-CH') }} verdächtige Anfragen als Spike gefiltert</strong>
+            <strong>
+              <span v-if="isUnderAttack" class="spike-banner-tag">Angriff aktiv</span>
+              {{ todayOverview.spikeDetection.flaggedRequests.toLocaleString('de-CH') }} verdächtige Anfragen als Spike gefiltert
+            </strong>
             <span>
               heute · von {{ todayOverview.spikeDetection.flaggedIps.toLocaleString('de-CH') }} IPs · getarnter Bot-Traffic, nicht in den Besucherzahlen enthalten<template v-if="todayOverview.spikeDetection.paths && todayOverview.spikeDetection.paths.length"> · Ziel: {{ todayOverview.spikeDetection.paths[0].path }}</template>
             </span>
@@ -809,6 +824,53 @@ body {
 .spike-banner-text span {
   color: var(--text-secondary);
   font-size: 0.8rem;
+}
+
+/* Angriffs-Zustand: lautes, pulsierendes Banner */
+.spike-banner--attack {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.24) 0%, rgba(239, 68, 68, 0.12) 100%);
+  border-color: rgba(239, 68, 68, 0.75);
+  animation: spike-pulse 1.6s ease-in-out infinite;
+}
+
+.spike-banner--attack .spike-banner-text strong {
+  color: #fca5a5;
+}
+
+.spike-banner--attack .spike-banner-icon {
+  animation: spike-icon-pulse 1.6s ease-in-out infinite;
+}
+
+.spike-banner-tag {
+  display: inline-block;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+@keyframes spike-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50%      { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.28); }
+}
+
+@keyframes spike-icon-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.9; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+
+/* Barrierefreiheit: keine Animation bei reduzierter Bewegung */
+@media (prefers-reduced-motion: reduce) {
+  .spike-banner--attack,
+  .spike-banner--attack .spike-banner-icon {
+    animation: none;
+  }
 }
 
 /* Heute Übersicht */
