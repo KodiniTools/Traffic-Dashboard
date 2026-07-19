@@ -36,7 +36,19 @@ const SPIKE_DETECTION = {
   minUniqueIps: 15,      // ...verteilt auf mind. so viele verschiedene IPs (schützt vor Einzel-IP)
   shallowMaxHits: 2,     // Eine IP gilt als "flach", wenn sie höchstens so viele Seitenaufrufe hatte
   shallowMaxSeconds: 10, // ...innerhalb dieser Zeitspanne (Hit-and-run)
-  requireNoAssets: true  // ...und dabei kein statisches Asset geladen hat (echte Browser tun das)
+  requireNoAssets: true, // ...und dabei kein statisches Asset geladen hat (echte Browser tun das)
+
+  // Zusatz-Signal: Ein einzelner exakter User-Agent-String, der auffällig viele
+  // Seitenaufrufe (ohne Asset-Loads) auf DIESELBE Seite macht, verrät ein Bot-Netz –
+  // echte Besucher streuen über viele Browser-/OS-Versionen. Ab diesem Schwellwert
+  // gilt die Seite als "unter Beschuss".
+  uaConcentrationThreshold: 40,
+
+  // Auf einer "unter Beschuss" stehenden Seite ALLE Seitenaufrufe von IPs ohne
+  // Asset-Loads filtern – egal ob im Peak oder im Tröpfeln, egal wie viele Treffer.
+  // Fängt langsame/verteilte Bots, die dem Zeitfenster entgehen. Echte Browser laden
+  // Assets und bleiben verschont. Bei Asset-CDN ggf. auf false setzen.
+  extendToNoAssetHits: true
 };
 
 // Zürich (Schweiz) Zeitzone
@@ -248,10 +260,10 @@ function detectBehavioralBots(entries) {
 
   const {
     windowMinutes, minHitsInWindow, minUniqueIps,
-    shallowMaxHits, shallowMaxSeconds, requireNoAssets
+    shallowMaxHits, shallowMaxSeconds, requireNoAssets,
+    uaConcentrationThreshold, extendToNoAssetHits
   } = SPIKE_DETECTION;
   const windowMs = windowMinutes * 60 * 1000;
-  const shallowMs = shallowMaxSeconds * 1000;
 
   // 1. Profil pro IP über ALLE Einträge (Seitenaufrufe, Assets, Zeitspanne)
   const ipProfile = {};
@@ -268,6 +280,15 @@ function detectBehavioralBots(entries) {
       p.assets++;
     }
   }
+  // Eine IP verhält sich "bot-artig", wenn sie kein einziges Asset geladen hat.
+  // (Ohne Asset-Info als Kriterium – z.B. bei CDN – Rückfall auf flaches Hit-and-run.)
+  const isBotlikeIp = (ip) => {
+    const p = ipProfile[ip];
+    if (!p) return false;
+    if (requireNoAssets) return p.assets === 0;
+    const spanSec = (p.last - p.first) / 1000;
+    return p.pageViews <= shallowMaxHits && p.paths.size <= 1 && spanSec <= shallowMaxSeconds;
+  };
 
   // 2. "Flache" IPs bestimmen: Hit-and-run auf eine einzige Seite, ohne Asset-Loads
   const shallowIps = new Set();
@@ -284,50 +305,77 @@ function detectBehavioralBots(entries) {
       shallowIps.add(ip);
     }
   }
-  // Nicht genug flache IPs für einen Swarm -> nichts tun (schützt normalen Traffic)
-  if (shallowIps.size < minUniqueIps) return summary;
 
-  // 3. Flache Seitenaufrufe nach Ziel-Pfad gruppieren
-  const byPath = {};
-  for (const e of entries) {
-    if (e.isPageView && shallowIps.has(e.ip)) {
-      const cp = e.path.split('?')[0];
-      (byPath[cp] || (byPath[cp] = [])).push(e);
+  // 3. Angriffs-Pfade bestimmen ("unter Beschuss").
+  const attackedPaths = new Set();
+
+  // 3a. Burst-Signal: viele flache Treffer auf eine Seite in kurzer Zeit,
+  //     verteilt auf genügend verschiedene IPs (gleitendes Fenster, Zwei-Zeiger).
+  if (shallowIps.size >= minUniqueIps) {
+    const byPath = {};
+    for (const e of entries) {
+      if (e.isPageView && shallowIps.has(e.ip)) {
+        const cp = e.path.split('?')[0];
+        (byPath[cp] || (byPath[cp] = [])).push(e);
+      }
     }
-  }
-
-  // 4. Pro Pfad mit gleitendem Zeitfenster nach Bursts suchen (Zwei-Zeiger, O(n))
-  const flaggedIps = new Set();
-  for (const path in byPath) {
-    const list = byPath[path];
-    list.sort((a, b) => a.date - b.date);
-    const flagged = new Set();
-    let start = 0;
-    for (let end = 0; end < list.length; end++) {
-      while (list[end].date - list[start].date > windowMs) start++;
-      if (end - start + 1 >= minHitsInWindow) {
-        const ips = new Set();
-        for (let k = start; k <= end; k++) ips.add(list[k].ip);
-        if (ips.size >= minUniqueIps) {
-          for (let k = start; k <= end; k++) flagged.add(k);
+    for (const path in byPath) {
+      const list = byPath[path];
+      list.sort((a, b) => a.date - b.date);
+      let start = 0;
+      for (let end = 0; end < list.length; end++) {
+        while (list[end].date - list[start].date > windowMs) start++;
+        if (end - start + 1 >= minHitsInWindow) {
+          const ips = new Set();
+          for (let k = start; k <= end; k++) ips.add(list[k].ip);
+          if (ips.size >= minUniqueIps) { attackedPaths.add(path); break; }
         }
       }
     }
-    if (flagged.size > 0) {
-      for (const idx of flagged) {
-        const e = list[idx];
-        e.isBot = true;
-        e.botName = 'spike';
-        e.isPageView = false;
-        flaggedIps.add(e.ip);
+  }
+
+  // 3b. UA-Konzentrations-Signal: ein einzelner exakter User-Agent, der viele
+  //     Asset-lose Seitenaufrufe auf DIESELBE Seite macht = getarntes Bot-Netz.
+  if (uaConcentrationThreshold > 0) {
+    const uaPathCounts = {}; // "path\x00ua" -> Anzahl Asset-loser Seitenaufrufe
+    for (const e of entries) {
+      if (e.isPageView && isBotlikeIp(e.ip)) {
+        const key = e.path.split('?')[0] + '\x00' + e.userAgent;
+        uaPathCounts[key] = (uaPathCounts[key] || 0) + 1;
       }
-      summary.flaggedRequests += flagged.size;
-      summary.paths.push({ path, requests: flagged.size });
+    }
+    for (const key in uaPathCounts) {
+      if (uaPathCounts[key] >= uaConcentrationThreshold) {
+        attackedPaths.add(key.split('\x00')[0]);
+      }
     }
   }
 
+  if (attackedPaths.size === 0) return summary;
+
+  // 4. Auf allen Angriffs-Pfaden ALLE Asset-losen Seitenaufrufe als Bot markieren.
+  //    Fängt Peak UND Tröpfeln sowie IPs mit mehreren Treffern. Echte Browser laden
+  //    Assets und bleiben verschont. (Ohne extendToNoAssetHits nur exakt flache IPs.)
+  const flaggedIps = new Set();
+  const perPath = {};
+  for (const e of entries) {
+    if (!e.isPageView) continue;
+    const cp = e.path.split('?')[0];
+    if (!attackedPaths.has(cp)) continue;
+    const flagIt = extendToNoAssetHits ? isBotlikeIp(e.ip) : shallowIps.has(e.ip);
+    if (!flagIt) continue;
+    e.isBot = true;
+    e.botName = 'spike';
+    e.isPageView = false;
+    flaggedIps.add(e.ip);
+    perPath[cp] = (perPath[cp] || 0) + 1;
+    summary.flaggedRequests++;
+  }
+
   summary.flaggedIps = flaggedIps.size;
-  summary.paths.sort((a, b) => b.requests - a.requests);
+  summary.paths = Object.entries(perPath)
+    .map(([path, requests]) => ({ path, requests }))
+    .sort((a, b) => b.requests - a.requests);
   if (summary.flaggedRequests > 0) {
     console.log(`[Spike-Erkennung] ${summary.flaggedRequests} verdächtige Anfragen von ${summary.flaggedIps} IPs als Bot markiert (Pfade: ${summary.paths.map(p => p.path).join(', ')})`);
   }
