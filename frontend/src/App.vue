@@ -324,6 +324,24 @@ const lastUpdated = computed(() => {
           </div>
         </div>
 
+        <!-- Warnung: verhaltensbasiert gefilterte Spike-/Swarm-Anfragen -->
+        <div
+          v-if="stats.spikeDetection && stats.spikeDetection.flaggedRequests > 0"
+          class="spike-banner"
+        >
+          <svg class="spike-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div class="spike-banner-text">
+            <strong>{{ stats.spikeDetection.flaggedRequests.toLocaleString('de-CH') }} verdächtige Anfragen als Spike gefiltert</strong>
+            <span>
+              von {{ stats.spikeDetection.flaggedIps.toLocaleString('de-CH') }} IPs · getarnter Bot-Traffic, nicht in den Besucherzahlen enthalten<template v-if="stats.spikeDetection.paths && stats.spikeDetection.paths.length"> · Ziel: {{ stats.spikeDetection.paths[0].path }}</template>
+            </span>
+          </div>
+        </div>
+
         <!-- Stats Cards -->
         <div class="stats-grid">
           <StatsCard
@@ -754,6 +772,41 @@ body {
   color: white;
   font-family: var(--font-display);
   cursor: pointer;
+}
+
+/* Spike-Warnung */
+.spike-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.08) 100%);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+  padding: 0.9rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.spike-banner-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: #ef4444;
+}
+
+.spike-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.spike-banner-text strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.spike-banner-text span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
 }
 
 /* Heute Übersicht */
