@@ -97,6 +97,15 @@ const EXCLUDED_IPS = [
   '31.10.151'
 ];
 
+// Pfad-Präfixe, die KOMPLETT aus jeder Statistik ausgeschlossen werden.
+// Vor allem das Dashboard selbst: dessen Seitenaufrufe, Assets und vor allem
+// das ständige API-Polling (/traffic-dashboard/api/stats/...) sind eigene
+// Zugriffe und dürfen die Statistik der eigentlichen Website nicht verfälschen.
+// Solche Anfragen werden gar nicht erst eingelesen (weder Mensch noch Bot).
+const EXCLUDED_PATH_PREFIXES = [
+  '/traffic-dashboard'
+];
+
 // Pfade die aus Top Pages ausgeschlossen werden (Scanner/Probes)
 const EXCLUDED_PATH_PATTERNS = [
   /\/wp-admin\//i,
@@ -477,7 +486,14 @@ function parseLogLine(line) {
   const requestParts = request.split(' ');
   const method = requestParts[0] || '-';
   const path = requestParts[1] || '-';
-  
+
+  // Dashboard-eigene Zugriffe komplett ausschließen (eigenes Polling/Besuche)
+  if (EXCLUDED_PATH_PREFIXES.some(prefix =>
+    path === prefix || path.startsWith(prefix + '/') || path.startsWith(prefix + '?')
+  )) {
+    return null;
+  }
+
   // Bot erkennen (erweitert)
   let isBot = BOT_PATTERNS.test(userAgent);
   let botName = null;
