@@ -25,9 +25,24 @@ function getBotColor(name) {
     facebook: '#1877f2',
     twitter: '#1da1f2',
     telegram: '#0088cc',
-    whatsapp: '#25d366'
+    whatsapp: '#25d366',
+    // Verhaltensbasiert erkannte, getarnte Bots
+    spike: '#ef4444',
+    scanner: '#f59e0b',
+    'empty-ua': '#a855f7'
   }
   return colors[name.toLowerCase()] || '#6b7280'
+}
+
+// Lesbares Label für verhaltensbasierte Bot-Kategorien
+function botLabel(name) {
+  const labels = {
+    spike: 'Spike (getarnt)',
+    scanner: 'Scanner',
+    'empty-ua': 'Kein User-Agent',
+    other: 'Sonstige'
+  }
+  return labels[name.toLowerCase()] || name
 }
 
 function getPercentage(count) {
@@ -59,7 +74,7 @@ function getPercentage(count) {
             class="bot-badge"
             :style="{ backgroundColor: getBotColor(bot.name) }"
           >
-            {{ bot.name }}
+            {{ botLabel(bot.name) }}
           </span>
           <span class="bot-count">{{ bot.count.toLocaleString('de-DE') }}</span>
         </div>
