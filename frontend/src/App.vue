@@ -324,9 +324,11 @@ const lastUpdated = computed(() => {
           </div>
         </div>
 
-        <!-- Warnung: verhaltensbasiert gefilterte Spike-/Swarm-Anfragen -->
+        <!-- Warnung: verhaltensbasiert gefilterte Spike-/Swarm-Anfragen.
+             Immer tagesbezogen (Zürich), setzt sich um 00:00 automatisch auf Null
+             zurück – unabhängig vom gewählten Zeitraum. -->
         <div
-          v-if="stats.spikeDetection && stats.spikeDetection.flaggedRequests > 0"
+          v-if="todayOverview && todayOverview.spikeDetection && todayOverview.spikeDetection.flaggedRequests > 0"
           class="spike-banner"
         >
           <svg class="spike-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -335,9 +337,9 @@ const lastUpdated = computed(() => {
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <div class="spike-banner-text">
-            <strong>{{ stats.spikeDetection.flaggedRequests.toLocaleString('de-CH') }} verdächtige Anfragen als Spike gefiltert</strong>
+            <strong>{{ todayOverview.spikeDetection.flaggedRequests.toLocaleString('de-CH') }} verdächtige Anfragen als Spike gefiltert</strong>
             <span>
-              von {{ stats.spikeDetection.flaggedIps.toLocaleString('de-CH') }} IPs · getarnter Bot-Traffic, nicht in den Besucherzahlen enthalten<template v-if="stats.spikeDetection.paths && stats.spikeDetection.paths.length"> · Ziel: {{ stats.spikeDetection.paths[0].path }}</template>
+              heute · von {{ todayOverview.spikeDetection.flaggedIps.toLocaleString('de-CH') }} IPs · getarnter Bot-Traffic, nicht in den Besucherzahlen enthalten<template v-if="todayOverview.spikeDetection.paths && todayOverview.spikeDetection.paths.length"> · Ziel: {{ todayOverview.spikeDetection.paths[0].path }}</template>
             </span>
           </div>
         </div>
