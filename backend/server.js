@@ -20,6 +20,25 @@ const CONFIG = {
   apiKey: process.env.DASHBOARD_API_KEY || 'dein-geheimer-api-key-hier'
 };
 
+// Verhaltensbasierte Spike-/Swarm-Erkennung
+// Erkennt plötzliche Anfrage-Wellen, die sich als echte Besucher tarnen
+// (normaler Browser-User-Agent, unverdächtiger Pfad), aber in Wirklichkeit
+// automatisierte Skripte/Scraper/Bot-Netze sind.
+//
+// Signatur eines solchen Spikes: Sehr viele VERSCHIEDENE IPs, die in kurzer
+// Zeit je nur EINEN flachen Treffer (Single-Page, sofort weg) auf DIESELBE
+// Seite machen und dabei NIE ein statisches Asset (CSS/JS/Bild) nachladen –
+// echte Browser laden diese Assets immer mit.
+const SPIKE_DETECTION = {
+  enabled: true,
+  windowMinutes: 10,     // Länge des gleitenden Zeitfensters
+  minHitsInWindow: 30,   // So viele flache Treffer auf eine Seite im Fenster = Spike
+  minUniqueIps: 15,      // ...verteilt auf mind. so viele verschiedene IPs (schützt vor Einzel-IP)
+  shallowMaxHits: 2,     // Eine IP gilt als "flach", wenn sie höchstens so viele Seitenaufrufe hatte
+  shallowMaxSeconds: 10, // ...innerhalb dieser Zeitspanne (Hit-and-run)
+  requireNoAssets: true  // ...und dabei kein statisches Asset geladen hat (echte Browser tun das)
+};
+
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
@@ -213,6 +232,112 @@ function buildSessions(entries) {
     sessions.push(session);
   }
   return sessions;
+}
+
+// Verhaltensbasierte Bot-Erkennung (Post-Processing über ALLE geladenen Einträge).
+//
+// Läuft NACH dem zeilenweisen Parsen, weil ein Spike nur im Gesamtbild sichtbar
+// ist – nicht an einer einzelnen Log-Zeile. Markiert erkannte Spike-Anfragen als
+// Bot (botName 'spike') und setzt isPageView=false. Dadurch fallen sie automatisch
+// aus Besucher-, Session-, Bounce- und allen anderen Auswertungen heraus.
+//
+// Verändert die übergebenen Einträge in-place. Gibt eine Zusammenfassung zurück.
+function detectBehavioralBots(entries) {
+  const summary = { flaggedRequests: 0, flaggedIps: 0, paths: [] };
+  if (!SPIKE_DETECTION.enabled || entries.length === 0) return summary;
+
+  const {
+    windowMinutes, minHitsInWindow, minUniqueIps,
+    shallowMaxHits, shallowMaxSeconds, requireNoAssets
+  } = SPIKE_DETECTION;
+  const windowMs = windowMinutes * 60 * 1000;
+  const shallowMs = shallowMaxSeconds * 1000;
+
+  // 1. Profil pro IP über ALLE Einträge (Seitenaufrufe, Assets, Zeitspanne)
+  const ipProfile = {};
+  for (const e of entries) {
+    let p = ipProfile[e.ip];
+    if (!p) p = ipProfile[e.ip] = { pageViews: 0, paths: new Set(), assets: 0, first: Infinity, last: -Infinity };
+    const t = e.date.getTime();
+    if (t < p.first) p.first = t;
+    if (t > p.last) p.last = t;
+    if (e.isPageView) {
+      p.pageViews++;
+      p.paths.add(e.path.split('?')[0]);
+    } else if (e.method === 'GET' && isStaticAsset(e.path)) {
+      p.assets++;
+    }
+  }
+
+  // 2. "Flache" IPs bestimmen: Hit-and-run auf eine einzige Seite, ohne Asset-Loads
+  const shallowIps = new Set();
+  for (const ip in ipProfile) {
+    const p = ipProfile[ip];
+    const spanSec = (p.last - p.first) / 1000;
+    if (
+      p.pageViews >= 1 &&
+      p.pageViews <= shallowMaxHits &&
+      p.paths.size <= 1 &&
+      spanSec <= shallowMaxSeconds &&
+      (!requireNoAssets || p.assets === 0)
+    ) {
+      shallowIps.add(ip);
+    }
+  }
+  // Nicht genug flache IPs für einen Swarm -> nichts tun (schützt normalen Traffic)
+  if (shallowIps.size < minUniqueIps) return summary;
+
+  // 3. Flache Seitenaufrufe nach Ziel-Pfad gruppieren
+  const byPath = {};
+  for (const e of entries) {
+    if (e.isPageView && shallowIps.has(e.ip)) {
+      const cp = e.path.split('?')[0];
+      (byPath[cp] || (byPath[cp] = [])).push(e);
+    }
+  }
+
+  // 4. Pro Pfad mit gleitendem Zeitfenster nach Bursts suchen (Zwei-Zeiger, O(n))
+  const flaggedIps = new Set();
+  for (const path in byPath) {
+    const list = byPath[path];
+    list.sort((a, b) => a.date - b.date);
+    const flagged = new Set();
+    let start = 0;
+    for (let end = 0; end < list.length; end++) {
+      while (list[end].date - list[start].date > windowMs) start++;
+      if (end - start + 1 >= minHitsInWindow) {
+        const ips = new Set();
+        for (let k = start; k <= end; k++) ips.add(list[k].ip);
+        if (ips.size >= minUniqueIps) {
+          for (let k = start; k <= end; k++) flagged.add(k);
+        }
+      }
+    }
+    if (flagged.size > 0) {
+      for (const idx of flagged) {
+        const e = list[idx];
+        e.isBot = true;
+        e.botName = 'spike';
+        e.isPageView = false;
+        flaggedIps.add(e.ip);
+      }
+      summary.flaggedRequests += flagged.size;
+      summary.paths.push({ path, requests: flagged.size });
+    }
+  }
+
+  summary.flaggedIps = flaggedIps.size;
+  summary.paths.sort((a, b) => b.requests - a.requests);
+  if (summary.flaggedRequests > 0) {
+    console.log(`[Spike-Erkennung] ${summary.flaggedRequests} verdächtige Anfragen von ${summary.flaggedIps} IPs als Bot markiert (Pfade: ${summary.paths.map(p => p.path).join(', ')})`);
+  }
+  return summary;
+}
+
+// Prüft ob ein Pfad ein statisches Asset ist (CSS/JS/Bild/Font/...)
+function isStaticAsset(path) {
+  const lowerPath = path.toLowerCase().split('?')[0];
+  return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
 }
 
 // Prüft ob ein Pfad aus Top Pages ausgeschlossen werden soll
@@ -433,7 +558,12 @@ async function readLogFiles(daysBackOrSinceDate = 1) {
       // Datei existiert nicht, weiter
     }
   }
-  
+
+  // Verhaltensbasierte Nacherkennung über das gesamte geladene Zeitfenster.
+  // Markiert getarnte Spike-/Swarm-Anfragen als Bot, bevor irgendeine
+  // Auswertung sie als echte Besucher zählt.
+  entries.spikeDetection = detectBehavioralBots(entries);
+
   return entries;
 }
 
@@ -447,6 +577,8 @@ function aggregateStats(entries) {
     humanRequests: entries.filter(e => !e.isBot).length,
     humanPageViews: entries.filter(e => e.isPageView).length,
     botRequests: entries.filter(e => e.isBot).length,
+    // Zusammenfassung der verhaltensbasierten Spike-Erkennung (falls vorhanden)
+    spikeDetection: entries.spikeDetection || { flaggedRequests: 0, flaggedIps: 0, paths: [] },
     statusCodes: {},
     topPages: {},
     topReferrers: {},
@@ -979,6 +1111,7 @@ app.get('/api/stats/today-overview', async (req, res) => {
       returningVisitors: returningIps,
       topEntryPage: Object.entries(entryPages).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
       topExitPage: Object.entries(exitPages).sort((a, b) => b[1] - a[1])[0]?.[0] || '-',
+      spikeDetection: todayEntries.spikeDetection || { flaggedRequests: 0, flaggedIps: 0, paths: [] },
       requestsByHour: {}
     };
 
