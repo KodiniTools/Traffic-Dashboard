@@ -255,17 +255,48 @@ function buildSessions(entries) {
   return sessions;
 }
 
-// Verhaltensbasierte Bot-Erkennung (Post-Processing über ALLE geladenen Einträge).
+// Verhaltensbasierte Bot-Erkennung (Post-Processing über die geladenen Einträge).
 //
-// Läuft NACH dem zeilenweisen Parsen, weil ein Spike nur im Gesamtbild sichtbar
-// ist – nicht an einer einzelnen Log-Zeile. Markiert erkannte Spike-Anfragen als
-// Bot (botName 'spike') und setzt isPageView=false. Dadurch fallen sie automatisch
-// aus Besucher-, Session-, Bounce- und allen anderen Auswertungen heraus.
+// WICHTIG: Läuft PRO ZÜRICH-KALENDERTAG getrennt. Sonst würde ein Tag je nach
+// geladenem Zeitraum unterschiedlich eingestuft (z.B. "Heute" vs. der Heute-Wert
+// im 14-Tage-Chart), weil Schwellwerte wie die UA-Konzentration über das gesamte
+// Fenster akkumulieren. Pro-Tag-Erkennung macht jeden Tag deterministisch:
+// dieselbe Zahl in jeder Ansicht.
 //
 // Verändert die übergebenen Einträge in-place. Gibt eine Zusammenfassung zurück.
 function detectBehavioralBots(entries) {
   const summary = { flaggedRequests: 0, flaggedIps: 0, paths: [] };
   if (!SPIKE_DETECTION.enabled || entries.length === 0) return summary;
+
+  // Einträge nach Zürich-Kalendertag gruppieren
+  const byDay = {};
+  for (const e of entries) {
+    const day = getZurichDateString(e.date);
+    (byDay[day] || (byDay[day] = [])).push(e);
+  }
+
+  const flaggedIps = new Set();
+  const perPath = {};
+  for (const day in byDay) {
+    summary.flaggedRequests += detectSpikesInWindow(byDay[day], flaggedIps, perPath);
+  }
+
+  summary.flaggedIps = flaggedIps.size;
+  summary.paths = Object.entries(perPath)
+    .map(([path, requests]) => ({ path, requests }))
+    .sort((a, b) => b.requests - a.requests);
+  if (summary.flaggedRequests > 0) {
+    console.log(`[Spike-Erkennung] ${summary.flaggedRequests} verdächtige Anfragen von ${summary.flaggedIps} IPs als Bot markiert (Pfade: ${summary.paths.map(p => p.path).join(', ')})`);
+  }
+  return summary;
+}
+
+// Kern der Erkennung innerhalb EINES Zeitfensters (typischerweise ein Kalendertag).
+// Markiert erkannte Spike-Anfragen in-place (isBot=true, botName='spike',
+// isPageView=false), sammelt betroffene IPs/Pfade in den übergebenen Containern
+// und gibt die Anzahl markierter Anfragen zurück.
+function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
+  if (entries.length === 0) return 0;
 
   const {
     windowMinutes, minHitsInWindow, minUniqueIps,
@@ -274,7 +305,7 @@ function detectBehavioralBots(entries) {
   } = SPIKE_DETECTION;
   const windowMs = windowMinutes * 60 * 1000;
 
-  // 1. Profil pro IP über ALLE Einträge (Seitenaufrufe, Assets, Zeitspanne)
+  // 1. Profil pro IP (Seitenaufrufe, Assets, Zeitspanne)
   const ipProfile = {};
   for (const e of entries) {
     let p = ipProfile[e.ip];
@@ -360,13 +391,12 @@ function detectBehavioralBots(entries) {
     }
   }
 
-  if (attackedPaths.size === 0) return summary;
+  if (attackedPaths.size === 0) return 0;
 
   // 4. Auf allen Angriffs-Pfaden ALLE Asset-losen Seitenaufrufe als Bot markieren.
   //    Fängt Peak UND Tröpfeln sowie IPs mit mehreren Treffern. Echte Browser laden
   //    Assets und bleiben verschont. (Ohne extendToNoAssetHits nur exakt flache IPs.)
-  const flaggedIps = new Set();
-  const perPath = {};
+  let flaggedCount = 0;
   for (const e of entries) {
     if (!e.isPageView) continue;
     const cp = e.path.split('?')[0];
@@ -376,19 +406,12 @@ function detectBehavioralBots(entries) {
     e.isBot = true;
     e.botName = 'spike';
     e.isPageView = false;
-    flaggedIps.add(e.ip);
-    perPath[cp] = (perPath[cp] || 0) + 1;
-    summary.flaggedRequests++;
+    flaggedIpsOut.add(e.ip);
+    perPathOut[cp] = (perPathOut[cp] || 0) + 1;
+    flaggedCount++;
   }
 
-  summary.flaggedIps = flaggedIps.size;
-  summary.paths = Object.entries(perPath)
-    .map(([path, requests]) => ({ path, requests }))
-    .sort((a, b) => b.requests - a.requests);
-  if (summary.flaggedRequests > 0) {
-    console.log(`[Spike-Erkennung] ${summary.flaggedRequests} verdächtige Anfragen von ${summary.flaggedIps} IPs als Bot markiert (Pfade: ${summary.paths.map(p => p.path).join(', ')})`);
-  }
-  return summary;
+  return flaggedCount;
 }
 
 // Prüft ob ein Pfad ein statisches Asset ist (CSS/JS/Bild/Font/...)
