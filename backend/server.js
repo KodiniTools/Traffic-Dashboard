@@ -126,6 +126,11 @@ const EXCLUDED_PATH_PATTERNS = [
   // Weitere Scanner/Exploit-Pfade
   /\/cgi-bin\//i,
   /\/\.well-known\/security/i,
+  // Chrome Private Prefetch Proxy probt diese Datei automatisch ab.
+  // Fehlt sie, entsteht ein 404 – aber es ist kein echter Besucher-Fehler,
+  // sondern eine automatische Infrastruktur-Anfrage (siehe nginx.conf für den
+  // Fix an der Quelle). Aus der 404-/Seiten-Statistik ausschließen.
+  /\/\.well-known\/traffic-advice/i,
   /\/\.ds_store/i,
   /\/\.htaccess/i,
   /\/\.htpasswd/i,
