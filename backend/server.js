@@ -150,8 +150,8 @@ const EXCLUDED_PATH_PATTERNS = [
 
 // XHR-/API-/Polling-Endpunkte: werden vom Frontend im Hintergrund abgefragt
 // (oft im Sekundentakt, Antwort meist "304 Not Modified"). Das sind KEINE
-// menschlichen Seitenaufrufe – aber auch KEINE Bots/Scanner, sondern legitime
-// Hintergrund-Requests der eigenen Seite.
+// menschlichen Seitenaufrufe – aber auch KEINE Bots/Scanner, sondern
+// technische Hintergrund-Requests der eigenen Seite.
 //
 // Hintergrund: Die Musikplayer-Seite pollt /modernermusikplayer/api/*/version
 // (hero-text, layout, background) alle paar Sekunden. Ein einziger offener
@@ -159,10 +159,13 @@ const EXCLUDED_PATH_PATTERNS = [
 // und ohne Datei-Endung – fälschlich als Seitenaufrufe gezählt wurden und die
 // Statistik massiv aufblähten (Seitenaufrufe, Besucher, Sessions, Seiten/Session).
 //
-// Solche Pfade werden aus der Seitenaufruf-/Top-Pages-/Session-Statistik
-// ausgeschlossen (isPageView=false), zählen aber weiter als echte Requests
-// (Total/Traffic). Match nur auf das Segment "/api/" – so bleiben Inhalts-
-// seiten wie /api-referenz oder /therapie unberührt.
+// Solche Pfade werden – wie das Dashboard-eigene Polling (/traffic-dashboard) –
+// GAR NICHT eingelesen (parseLogLine gibt null zurück). Damit fließen sie in
+// KEINE Statistik ein: weder Seitenaufrufe/Besucher/Sessions noch die Gesamt-
+// Request-Zahl oder den Live-Feed. Für ein Besucher-Analytics-Dashboard sind
+// Hintergrund-XHRs kein zählbarer Traffic (Traffic in Bytes ändert sich ohnehin
+// kaum, da die Polls 304/0 Bytes liefern). Match nur auf das Segment "/api/" –
+// so bleiben Inhaltsseiten wie /api-referenz oder /therapie unberührt.
 const API_PATH_PATTERNS = [
   /\/api\//i,
 ];
@@ -456,10 +459,6 @@ function isExcludedFromTopPages(path) {
   if (EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
     return true;
   }
-  // API-/Polling-Endpunkte ausschließen (kein menschlicher Seitenaufruf)
-  if (isApiRequest(path)) {
-    return true;
-  }
   // Statische Assets ausschließen (Dateiendung prüfen)
   const lowerPath = path.toLowerCase().split('?')[0];
   if (EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))) {
@@ -548,6 +547,13 @@ function parseLogLine(line) {
   if (EXCLUDED_PATH_PREFIXES.some(prefix =>
     path === prefix || path.startsWith(prefix + '/') || path.startsWith(prefix + '?')
   )) {
+    return null;
+  }
+
+  // XHR-/API-/Polling-Endpunkte komplett ausschließen (kein zählbarer Traffic
+  // für ein Besucher-Dashboard – siehe API_PATH_PATTERNS). Verhindert, dass das
+  // Hintergrund-Polling der Seite die Gesamt-Request-Zahl aufbläht.
+  if (isApiRequest(path)) {
     return null;
   }
 
