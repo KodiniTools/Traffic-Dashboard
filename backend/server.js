@@ -148,6 +148,25 @@ const EXCLUDED_PATH_PATTERNS = [
   /\/sql/i,
 ];
 
+// XHR-/API-/Polling-Endpunkte: werden vom Frontend im Hintergrund abgefragt
+// (oft im Sekundentakt, Antwort meist "304 Not Modified"). Das sind KEINE
+// menschlichen Seitenaufrufe – aber auch KEINE Bots/Scanner, sondern legitime
+// Hintergrund-Requests der eigenen Seite.
+//
+// Hintergrund: Die Musikplayer-Seite pollt /modernermusikplayer/api/*/version
+// (hero-text, layout, background) alle paar Sekunden. Ein einziger offener
+// Browser-Tab erzeugt so tausende Requests, die – weil GET, echter Browser-UA
+// und ohne Datei-Endung – fälschlich als Seitenaufrufe gezählt wurden und die
+// Statistik massiv aufblähten (Seitenaufrufe, Besucher, Sessions, Seiten/Session).
+//
+// Solche Pfade werden aus der Seitenaufruf-/Top-Pages-/Session-Statistik
+// ausgeschlossen (isPageView=false), zählen aber weiter als echte Requests
+// (Total/Traffic). Match nur auf das Segment "/api/" – so bleiben Inhalts-
+// seiten wie /api-referenz oder /therapie unberührt.
+const API_PATH_PATTERNS = [
+  /\/api\//i,
+];
+
 // Dateiendungen die keine echten Seitenbesuche sind (statische Assets)
 const EXCLUDED_EXTENSIONS = [
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.avif',
@@ -425,10 +444,20 @@ function isStaticAsset(path) {
   return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
 }
 
+// Prüft ob ein Pfad ein XHR-/API-/Polling-Endpunkt ist (kein Seitenaufruf)
+function isApiRequest(path) {
+  const cleanPath = path.split('?')[0];
+  return API_PATH_PATTERNS.some(pattern => pattern.test(cleanPath));
+}
+
 // Prüft ob ein Pfad aus Top Pages ausgeschlossen werden soll
 function isExcludedFromTopPages(path) {
   // Scanner/Probe-Pfade ausschließen
   if (EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
+    return true;
+  }
+  // API-/Polling-Endpunkte ausschließen (kein menschlicher Seitenaufruf)
+  if (isApiRequest(path)) {
     return true;
   }
   // Statische Assets ausschließen (Dateiendung prüfen)
