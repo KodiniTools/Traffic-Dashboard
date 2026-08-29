@@ -13,6 +13,7 @@ import ErrorPages from './components/ErrorPages.vue'
 import UserBehavior from './components/UserBehavior.vue'
 import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
 import UTMStats from './components/UTMStats.vue'
+import AiSourceStats from './components/AiSourceStats.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -473,6 +474,7 @@ const lastUpdated = computed(() => {
         </div>
 
         <div class="data-grid">
+          <AiSourceStats :aiSourceStats="stats.aiSourceStats" />
           <UTMStats :utmStats="stats.utmStats" />
         </div>
 

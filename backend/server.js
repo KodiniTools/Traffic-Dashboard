@@ -694,6 +694,52 @@ async function readLogFiles(daysBackOrSinceDate = 1) {
   return entries;
 }
 
+// KI-/LLM-Quellen-Erkennung
+// Erkennt Traffic, der von KI-Assistenten vermittelt wurde – sowohl über den
+// Referrer (z. B. Perplexity, Gemini, Claude setzen KEINE UTM-Parameter) als
+// auch über utm_source (z. B. ChatGPT hängt ?utm_source=chatgpt.com an).
+// So wird die echte KI-Sichtbarkeit erfasst, nicht nur der UTM-Teil.
+const AI_SOURCES = [
+  { name: 'ChatGPT',    icon: '🤖', patterns: ['chatgpt.com', 'chat.openai.com', 'openai.com'] },
+  { name: 'Perplexity', icon: '🔮', patterns: ['perplexity.ai'] },
+  { name: 'Gemini',     icon: '✦',  patterns: ['gemini.google.com', 'bard.google.com'] },
+  { name: 'Claude',     icon: '🧠', patterns: ['claude.ai'] },
+  { name: 'Copilot',    icon: '🪁', patterns: ['copilot.microsoft.com', 'edgeservices.bing.com'] },
+  { name: 'Grok',       icon: '𝕏',  patterns: ['grok.com', 'x.ai'] },
+  { name: 'DeepSeek',   icon: '🐋', patterns: ['chat.deepseek.com', 'deepseek.com'] },
+  { name: 'Mistral',    icon: '🌬️', patterns: ['chat.mistral.ai'] },
+  { name: 'You.com',    icon: '🔎', patterns: ['you.com'] },
+  { name: 'Poe',        icon: '💬', patterns: ['poe.com'] },
+  { name: 'Phind',      icon: '🧭', patterns: ['phind.com'] }
+];
+
+// Ordnet einen Kandidaten-String (Referrer-Hostname oder utm_source) einer
+// KI-Quelle zu. Gibt den Provider-Namen zurück oder null.
+function matchAiProvider(candidate) {
+  if (!candidate) return null;
+  const value = candidate.toLowerCase();
+  for (const src of AI_SOURCES) {
+    if (src.patterns.some(p => value === p || value.endsWith('.' + p) || value.includes(p))) {
+      return src.name;
+    }
+  }
+  return null;
+}
+
+// Bestimmt die KI-Quelle einer einzelnen Anfrage. Referrer (Ground Truth) hat
+// Vorrang vor utm_source, damit z. B. ein echter Perplexity-Referrer nicht von
+// einem mitgeschleppten utm_source überschrieben wird.
+function detectAiSource(entry) {
+  if (entry.referrer && entry.referrer !== '-') {
+    try {
+      const host = new URL(entry.referrer).hostname;
+      const viaReferrer = matchAiProvider(host);
+      if (viaReferrer) return viaReferrer;
+    } catch (e) { /* ungültige Referrer-URL ignorieren */ }
+  }
+  return matchAiProvider(entry.utmSource);
+}
+
 // Statistiken aggregieren
 function aggregateStats(entries) {
   const stats = {
@@ -1068,6 +1114,43 @@ function aggregateStats(entries) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([journey, count]) => ({ journey, count }));
+
+  // 17. KI-/LLM-Quellen (Referrer + UTM kombiniert)
+  const aiCounts = {};        // Provider -> Besuche
+  const aiIps = {};           // Provider -> Set unique IPs
+  const aiByDayTotals = {};   // Tag -> KI-Besuche gesamt (Trend)
+  let aiTotalVisits = 0;
+  const aiUniqueIps = new Set();
+  for (const entry of entries) {
+    if (!entry.isPageView) continue;
+    const provider = detectAiSource(entry);
+    if (!provider) continue;
+    aiCounts[provider] = (aiCounts[provider] || 0) + 1;
+    if (!aiIps[provider]) aiIps[provider] = new Set();
+    aiIps[provider].add(entry.ip);
+    aiUniqueIps.add(entry.ip);
+    aiTotalVisits++;
+    const day = getZurichDateString(entry.date);
+    aiByDayTotals[day] = (aiByDayTotals[day] || 0) + 1;
+  }
+  const humanPageViews = stats.humanPageViews || 0;
+  stats.aiSourceStats = {
+    totalVisits: aiTotalVisits,
+    uniqueVisitors: aiUniqueIps.size,
+    // Anteil am gesamten menschlichen Seiten-Traffic (in Prozent, 1 Nachkommastelle)
+    shareOfPageViews: humanPageViews > 0
+      ? Math.round((aiTotalVisits / humanPageViews) * 1000) / 10
+      : 0,
+    providers: Object.entries(aiCounts)
+      .map(([name, count]) => {
+        const meta = AI_SOURCES.find(s => s.name === name);
+        return { name, count, uniqueVisitors: aiIps[name].size, icon: meta ? meta.icon : '🔗' };
+      })
+      .sort((a, b) => b.count - a.count),
+    byDay: Object.entries(aiByDayTotals)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, count]) => ({ date, count }))
+  };
 
   return stats;
 }
