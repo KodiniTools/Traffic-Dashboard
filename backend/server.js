@@ -51,6 +51,19 @@ const SPIKE_DETECTION = {
   extendToNoAssetHits: true
 };
 
+// Erkennung getarnter Crawler ("cloaked bots"): ein browserähnlicher
+// User-Agent (der die BOT_PATTERNS umgeht), der sich aber bot-typisch verhält –
+// besucht viele verschiedene Seiten, lädt aber KEIN einziges statisches Asset.
+// Echte Browser laden immer CSS/JS/Favicon, auch aus dem Cache (als 304). Solche
+// IPs zählen sonst fälschlich als "Human". Läuft pro Zürich-Kalendertag.
+const CLOAKED_BOT_DETECTION = {
+  enabled: true,
+  minPageViews: 6,      // mind. so viele Seitenaufrufe am Tag...
+  minDistinctPaths: 5   // ...auf so viele VERSCHIEDENE Seiten, komplett ohne Asset-Load.
+  // Bei Setups mit separatem Asset-CDN (Assets tauchen nicht im Log auf)
+  // 'enabled: false' setzen, sonst würden echte Besucher fehlklassifiziert.
+};
+
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
@@ -292,8 +305,8 @@ function buildSessions(entries) {
 //
 // Verändert die übergebenen Einträge in-place. Gibt eine Zusammenfassung zurück.
 function detectBehavioralBots(entries) {
-  const summary = { flaggedRequests: 0, flaggedIps: 0, paths: [] };
-  if (!SPIKE_DETECTION.enabled || entries.length === 0) return summary;
+  const summary = { flaggedRequests: 0, flaggedIps: 0, paths: [], cloakedRequests: 0, cloakedIps: 0 };
+  if (entries.length === 0) return summary;
 
   // Einträge nach Zürich-Kalendertag gruppieren
   const byDay = {};
@@ -302,20 +315,72 @@ function detectBehavioralBots(entries) {
     (byDay[day] || (byDay[day] = [])).push(e);
   }
 
-  const flaggedIps = new Set();
+  const flaggedIps = new Set();       // Spike-/Swarm-Angriffe
   const perPath = {};
+  const cloakedIps = new Set();       // getarnte Crawler (browser-UA, keine Assets)
   for (const day in byDay) {
-    summary.flaggedRequests += detectSpikesInWindow(byDay[day], flaggedIps, perPath);
+    // Zuerst Spike-Erkennung (markiert Angriffs-Traffic), dann fängt die
+    // Cloaked-Erkennung die verbleibenden getarnten Einzel-Crawler ab.
+    if (SPIKE_DETECTION.enabled) {
+      summary.flaggedRequests += detectSpikesInWindow(byDay[day], flaggedIps, perPath);
+    }
+    summary.cloakedRequests += flagCloakedBots(byDay[day], cloakedIps);
   }
 
   summary.flaggedIps = flaggedIps.size;
+  summary.cloakedIps = cloakedIps.size;
   summary.paths = Object.entries(perPath)
     .map(([path, requests]) => ({ path, requests }))
     .sort((a, b) => b.requests - a.requests);
   if (summary.flaggedRequests > 0) {
     console.log(`[Spike-Erkennung] ${summary.flaggedRequests} verdächtige Anfragen von ${summary.flaggedIps} IPs als Bot markiert (Pfade: ${summary.paths.map(p => p.path).join(', ')})`);
   }
+  if (summary.cloakedRequests > 0) {
+    console.log(`[Cloaked-Bot-Erkennung] ${summary.cloakedRequests} Anfragen von ${summary.cloakedIps} getarnten Crawler-IPs (browser-UA, keine Asset-Loads) als Bot markiert`);
+  }
   return summary;
+}
+
+// Markiert getarnte Crawler eines Zeitfensters (typischerweise ein Kalendertag):
+// IPs mit browserähnlichem User-Agent (nicht schon per BOT_PATTERNS erkannt), die
+// viele verschiedene Seiten aufrufen, aber KEIN statisches Asset laden. Setzt bei
+// den betroffenen Anfragen isBot=true (in-place) und gibt deren Anzahl zurück.
+function flagCloakedBots(entries, cloakedIpsOut) {
+  if (!CLOAKED_BOT_DETECTION.enabled || entries.length === 0) return 0;
+  const { minPageViews, minDistinctPaths } = CLOAKED_BOT_DETECTION;
+
+  // Profil pro IP: Seitenaufrufe, verschiedene Seiten, geladene Assets.
+  const prof = {};
+  for (const e of entries) {
+    if (e.isBot) continue; // bereits als Bot erkannt (UA/Scanner/Spike)
+    let p = prof[e.ip] || (prof[e.ip] = { pageViews: 0, paths: new Set(), assets: 0 });
+    if (e.isPageView) {
+      p.pageViews++;
+      p.paths.add(e.path.split('?')[0]);
+    } else if (e.method === 'GET' && isStaticAsset(e.path)) {
+      p.assets++;
+    }
+  }
+
+  const cloaked = new Set();
+  for (const ip in prof) {
+    const p = prof[ip];
+    if (p.assets === 0 && p.pageViews >= minPageViews && p.paths.size >= minDistinctPaths) {
+      cloaked.add(ip);
+    }
+  }
+  if (cloaked.size === 0) return 0;
+
+  let flagged = 0;
+  for (const e of entries) {
+    if (e.isBot || !cloaked.has(e.ip)) continue;
+    e.isBot = true;
+    e.botName = 'cloaked';
+    e.isPageView = false;
+    cloakedIpsOut.add(e.ip);
+    flagged++;
+  }
+  return flagged;
 }
 
 // Kern der Erkennung innerhalb EINES Zeitfensters (typischerweise ein Kalendertag).
@@ -445,6 +510,14 @@ function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
 function isStaticAsset(path) {
   const lowerPath = path.toLowerCase().split('?')[0];
   return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+}
+
+// Echte menschliche Anfrage: kein Bot UND kein statisches Asset (CSS/JS/Bild/
+// Font/...). So spiegelt "Human Requests" tatsächliche Nutzeraktivität wider und
+// wird nicht durch die vielen Asset-Anfragen aufgebläht, die ein Seitenaufruf im
+// Browser nebenbei auslöst.
+function isHumanRequest(entry) {
+  return !entry.isBot && !isStaticAsset(entry.path);
 }
 
 // Prüft ob ein Pfad ein XHR-/API-/Polling-Endpunkt ist (kein Seitenaufruf)
@@ -747,7 +820,7 @@ function aggregateStats(entries) {
     uniqueVisitors: new Set(entries.filter(e => e.isPageView).map(e => e.ip)).size,
     totalBots: new Set(entries.filter(e => e.isBot).map(e => e.ip)).size,
     totalBytes: entries.reduce((sum, e) => sum + e.bytes, 0),
-    humanRequests: entries.filter(e => !e.isBot).length,
+    humanRequests: entries.filter(isHumanRequest).length,
     humanPageViews: entries.filter(e => e.isPageView).length,
     botRequests: entries.filter(e => e.isBot).length,
     // Zusammenfassung der verhaltensbasierten Spike-Erkennung (falls vorhanden)
@@ -799,7 +872,11 @@ function aggregateStats(entries) {
     if (entry.isBot) {
       stats.requestsByDay[day].bot++;
     } else {
-      stats.requestsByDay[day].human++;
+      // Nur echte menschliche Anfragen zählen – statische Assets (CSS/JS/Bilder)
+      // gehören nicht in die "Human Requests"-Linie.
+      if (!isStaticAsset(entry.path)) {
+        stats.requestsByDay[day].human++;
+      }
       if (entry.isPageView) {
         stats.requestsByDay[day].pageViews++;
         stats.requestsByDay[day].uniqueIps.add(entry.ip);
@@ -1312,7 +1389,7 @@ app.get('/api/stats/today-overview', async (req, res) => {
       zurichDate: getZurichToday(),
       visitors: new Set(todayEntries.filter(e => e.isPageView).map(e => e.ip)).size,
       pageViews: todayEntries.filter(e => e.isPageView).length,
-      humanRequests: todayEntries.filter(e => !e.isBot).length,
+      humanRequests: todayEntries.filter(isHumanRequest).length,
       botRequests: todayEntries.filter(e => e.isBot).length,
       totalBytes: todayEntries.reduce((sum, e) => sum + e.bytes, 0),
       totalBytesFormatted: formatBytes(todayEntries.reduce((sum, e) => sum + e.bytes, 0)),
