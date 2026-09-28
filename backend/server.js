@@ -295,6 +295,57 @@ function buildSessions(entries) {
   return sessions;
 }
 
+// Tool-Name aus einem Pfad ableiten: erstes Pfadsegment (kodinitools.com/<tool>/...).
+// Ein vorangestelltes Sprach-Segment (/de/<tool>, /en-us/<tool>) wird übersprungen.
+// "/" bzw. leere Pfade zählen als Startseite.
+const LANG_SEGMENT = /^[a-z]{2}(-[a-z]{2})?$/i;
+function extractTool(path) {
+  const clean = (path || '').split('?')[0].split('#')[0];
+  const segments = clean.split('/').filter(Boolean);
+  if (segments.length > 1 && LANG_SEGMENT.test(segments[0])) segments.shift();
+  if (segments.length === 0) return 'Startseite';
+  try {
+    return decodeURIComponent(segments[0]);
+  } catch {
+    return segments[0];
+  }
+}
+
+// Die N längsten Sessions (Dauer = letzter minus erster Seitenaufruf).
+// Single-Page-Sessions haben keine messbare Dauer und werden ignoriert.
+function getLongestSessions(sessions, limit = 15) {
+  return sessions
+    .filter(s => s.length > 1)
+    .map(s => ({ session: s, duration: (s[s.length - 1].date - s[0].date) / 1000 }))
+    .filter(x => x.duration > 0)
+    .sort((a, b) => b.duration - a.duration)
+    .slice(0, limit)
+    .map(({ session, duration }) => {
+      const toolCounts = {};
+      for (const e of session) {
+        const tool = extractTool(e.path);
+        toolCounts[tool] = (toolCounts[tool] || 0) + 1;
+      }
+      // Haupt-Tool = meiste Seitenaufrufe; bei Gleichstand das zuerst besuchte
+      const toolOrder = [...new Set(session.map(e => extractTool(e.path)))];
+      const tools = toolOrder
+        .map(name => ({ name, views: toolCounts[name] }))
+        .sort((a, b) => b.views - a.views);
+      const first = session[0];
+      return {
+        start: first.date.toISOString(),
+        end: session[session.length - 1].date.toISOString(),
+        durationSeconds: Math.round(duration),
+        pageViews: session.length,
+        tool: tools[0].name,
+        tools,
+        entryPage: first.path.split('?')[0],
+        device: detectDevice(first.userAgent),
+        ip: first.ip.replace(/\.\d+$/, '.xxx').replace(/:[0-9a-f]*:[0-9a-f]*$/i, ':xxxx')
+      };
+    });
+}
+
 // Verhaltensbasierte Bot-Erkennung (Post-Processing über die geladenen Einträge).
 //
 // WICHTIG: Läuft PRO ZÜRICH-KALENDERTAG getrennt. Sonst würde ein Tag je nach
@@ -1411,6 +1462,39 @@ app.get('/api/stats/today-overview', async (req, res) => {
     }
 
     res.json(stats);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Die 15 längsten Sessions eines Tages (Zürich, 00:00 - 24:00)
+// Query: ?date=YYYY-MM-DD (Standard: heute, max. 30 Tage zurück)
+const LONGEST_SESSIONS_MAX_DAYS_BACK = 30;
+app.get('/api/stats/longest-sessions', async (req, res) => {
+  try {
+    const today = getZurichToday();
+    const date = typeof req.query.date === 'string' && req.query.date ? req.query.date : today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || getZurichDateString(zurichMidnight(date)) !== date) {
+      return res.status(400).json({ error: 'Ungültiges Datum (erwartet YYYY-MM-DD)' });
+    }
+    const dayStart = zurichMidnight(date);
+    const todayStart = zurichMidnight(today);
+    const daysBack = Math.round((todayStart - dayStart) / 86400000);
+    if (daysBack < 0 || daysBack > LONGEST_SESSIONS_MAX_DAYS_BACK) {
+      return res.status(400).json({ error: `Datum muss zwischen heute und ${LONGEST_SESSIONS_MAX_DAYS_BACK} Tagen zurück liegen` });
+    }
+
+    const entries = await readLogFiles(dayStart);
+    const dayEntries = entries.filter(e => getZurichDateString(e.date) === date);
+    const sessions = buildSessions(dayEntries);
+
+    res.json({
+      date,
+      isToday: date === today,
+      totalSessions: sessions.length,
+      sessions: getLongestSessions(sessions, 15)
+    });
   } catch (error) {
     console.error('Fehler:', error);
     res.status(500).json({ error: error.message });
