@@ -66,7 +66,7 @@
         return;
       }
       new Image().src = url;
-    } catch (e) { /* nie die Seite stören */ }
+    } catch { /* nie die Seite stören */ }
   }
 
   function tick() {
