@@ -16,6 +16,7 @@ import UTMStats from './components/UTMStats.vue'
 import AiSourceStats from './components/AiSourceStats.vue'
 import LongestSessions from './components/LongestSessions.vue'
 import VisitorCheck from './components/VisitorCheck.vue'
+import ZurichClock from './components/ZurichClock.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -333,7 +334,10 @@ const lastUpdated = computed(() => {
           <p class="subtitle">kodinitools.com</p>
         </div>
       </div>
-      
+
+      <!-- Laufende Uhr in Zürcher Zeit (massgeblich für alle Tageswerte) -->
+      <ZurichClock />
+
       <div class="header-right">
         <div class="period-selector">
           <button 
