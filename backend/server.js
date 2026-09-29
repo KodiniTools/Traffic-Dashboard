@@ -73,6 +73,12 @@ const CLOAKED_BOT_DETECTION = {
 const HEARTBEAT_PATH = '/__kt_hb';
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
+// Bounce-Definition wie Google Analytics 4: Eine Session ist "engagiert", wenn
+// sie mind. 2 Seitenaufrufe hat ODER länger als ENGAGED_MIN_SECONDS dauert.
+// Bounce = nicht engagiert. Ohne Heartbeat hat eine 1-Seiten-Session immer
+// Dauer 0 – dann entspricht das exakt der alten Definition (1 Seite = Bounce).
+const ENGAGED_MIN_SECONDS = 10;
+
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
@@ -324,6 +330,10 @@ function buildSessions(entries) {
     if (session) sessions.push(session);
   }
   return sessions;
+}
+
+function isEngagedSession(session) {
+  return session.length > 1 || getSessionDuration(session) > ENGAGED_MIN_SECONDS;
 }
 
 // Session-Dauer in Sekunden: erster Seitenaufruf bis letzte Aktivität
@@ -1049,12 +1059,15 @@ function aggregateStats(entries) {
   // 2. Session-Analyse
   const sessions = buildSessions(entries);
   const totalSessions = sessions.length;
-  const bounceSessions = sessions.filter(s => s.length === 1).length;
+  const bounceSessions = sessions.filter(s => !isEngagedSession(s)).length;
   const totalPagesInSessions = sessions.reduce((sum, s) => sum + s.length, 0);
 
   stats.sessionStats = {
     totalSessions,
+    // Bounce = nicht engagierte Session (GA4-Definition, siehe ENGAGED_MIN_SECONDS)
     bounceRate: totalSessions > 0 ? Math.round((bounceSessions / totalSessions) * 100) : 0,
+    engagedSessions: totalSessions - bounceSessions,
+    engagedMinSeconds: ENGAGED_MIN_SECONDS,
     avgPagesPerSession: totalSessions > 0 ? parseFloat((totalPagesInSessions / totalSessions).toFixed(1)) : 0
   };
 
@@ -1529,26 +1542,38 @@ app.get('/api/stats/today-overview', async (req, res) => {
   }
 });
 
+// Tagesbezogene Endpunkte: ?date=YYYY-MM-DD (Standard: heute, max. 30 Tage zurück)
+const DAY_QUERY_MAX_DAYS_BACK = 30;
+
+// Validiert ?date. Gibt { date, today } zurück oder { error } (für HTTP 400).
+function parseDayQuery(req) {
+  const today = getZurichToday();
+  const date = typeof req.query.date === 'string' && req.query.date ? req.query.date : today;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || getZurichDateString(zurichMidnight(date)) !== date) {
+    return { error: 'Ungültiges Datum (erwartet YYYY-MM-DD)' };
+  }
+  const daysBack = Math.round((zurichMidnight(today) - zurichMidnight(date)) / 86400000);
+  if (daysBack < 0 || daysBack > DAY_QUERY_MAX_DAYS_BACK) {
+    return { error: `Datum muss zwischen heute und ${DAY_QUERY_MAX_DAYS_BACK} Tagen zurück liegen` };
+  }
+  return { date, today };
+}
+
+// Alle Einträge (inkl. Heartbeats) eines Zürich-Kalendertages
+async function readDayEntries(date) {
+  const entries = await readLogFiles(zurichMidnight(date));
+  const dayEntries = entries.filter(e => getZurichDateString(e.date) === date);
+  dayEntries.heartbeats = entries.heartbeats.filter(h => getZurichDateString(h.date) === date);
+  return dayEntries;
+}
+
 // Die 15 längsten Sessions eines Tages (Zürich, 00:00 - 24:00)
-// Query: ?date=YYYY-MM-DD (Standard: heute, max. 30 Tage zurück)
-const LONGEST_SESSIONS_MAX_DAYS_BACK = 30;
 app.get('/api/stats/longest-sessions', async (req, res) => {
   try {
-    const today = getZurichToday();
-    const date = typeof req.query.date === 'string' && req.query.date ? req.query.date : today;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || getZurichDateString(zurichMidnight(date)) !== date) {
-      return res.status(400).json({ error: 'Ungültiges Datum (erwartet YYYY-MM-DD)' });
-    }
-    const dayStart = zurichMidnight(date);
-    const todayStart = zurichMidnight(today);
-    const daysBack = Math.round((todayStart - dayStart) / 86400000);
-    if (daysBack < 0 || daysBack > LONGEST_SESSIONS_MAX_DAYS_BACK) {
-      return res.status(400).json({ error: `Datum muss zwischen heute und ${LONGEST_SESSIONS_MAX_DAYS_BACK} Tagen zurück liegen` });
-    }
+    const { date, today, error } = parseDayQuery(req);
+    if (error) return res.status(400).json({ error });
 
-    const entries = await readLogFiles(dayStart);
-    const dayEntries = entries.filter(e => getZurichDateString(e.date) === date);
-    dayEntries.heartbeats = entries.heartbeats.filter(h => getZurichDateString(h.date) === date);
+    const dayEntries = await readDayEntries(date);
     const sessions = buildSessions(dayEntries);
     const durations = sessions.map(getSessionDuration);
 
@@ -1562,6 +1587,89 @@ app.get('/api/stats/longest-sessions', async (req, res) => {
       zeroDurationSessions: sessions.filter((s, i) => s.length > 1 && durations[i] === 0).length,
       heartbeatActive: dayEntries.heartbeats.length > 0,
       sessions: getLongestSessions(sessions, 15)
+    });
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Abdeckungs-Check: Wie viele echte Besucher zählt das Dashboard NICHT?
+// Heartbeats dienen als Beleg für echte Menschen (JavaScript läuft, Nutzer aktiv).
+// Jede IP mit Heartbeat, die NICHT als Besucher zählt, ist ein verpasster Besuch –
+// mit Grund. Umgekehrt zeigt "counted.withoutHeartbeat", wie viele gezählte
+// Besucher keinen Heartbeat senden (Blocker, kein JS, Tab sofort zu – oder Bots
+// mit Browser-User-Agent). Eigene IPs (EXCLUDED_IPS) sind in beiden Werten nicht
+// enthalten. Aufruf auf dem Server: node scripts/check-coverage.js
+app.get('/api/stats/coverage', async (req, res) => {
+  try {
+    const { date, today, error } = parseDayQuery(req);
+    if (error) return res.status(400).json({ error });
+
+    const dayEntries = await readDayEntries(date);
+
+    const byIp = new Map();
+    for (const e of dayEntries) {
+      if (!byIp.has(e.ip)) byIp.set(e.ip, []);
+      byIp.get(e.ip).push(e);
+    }
+    const heartbeatCounts = new Map();
+    for (const hb of dayEntries.heartbeats) {
+      heartbeatCounts.set(hb.ip, (heartbeatCounts.get(hb.ip) || 0) + 1);
+    }
+    const visitorIps = new Set(dayEntries.filter(e => e.isPageView).map(e => e.ip));
+
+    // Grund, warum eine IP mit Heartbeat nicht als Besucher zählt
+    function missReason(ipEntries) {
+      if (!ipEntries || ipEntries.length === 0) {
+        return 'kein-request'; // Seite aus Browser-Cache oder vor Mitternacht geladen
+      }
+      for (const name of ['spike', 'cloaked']) {
+        if (ipEntries.some(e => e.botName === name)) return name;
+      }
+      const bot = ipEntries.find(e => e.isBot);
+      if (bot) return `bot:${bot.botName || 'other'}`;
+      return 'kein-seitenaufruf'; // nur Weiterleitungen, Assets oder Fehlerseiten
+    }
+
+    const missed = [];
+    for (const [ip, heartbeats] of heartbeatCounts) {
+      if (visitorIps.has(ip)) continue;
+      const ipEntries = byIp.get(ip) || [];
+      const pages = [...new Set(ipEntries.map(e => e.path.split('?')[0]))];
+      missed.push({
+        ip: ip.replace(/\.\d+$/, '.xxx').replace(/:[0-9a-f]*:[0-9a-f]*$/i, ':xxxx'),
+        reason: missReason(ipEntries),
+        heartbeats,
+        requests: ipEntries.length,
+        samplePaths: pages.slice(0, 5)
+      });
+    }
+    missed.sort((a, b) => b.heartbeats - a.heartbeats);
+
+    const byReason = {};
+    for (const m of missed) byReason[m.reason] = (byReason[m.reason] || 0) + 1;
+
+    const withHeartbeat = [...visitorIps].filter(ip => heartbeatCounts.has(ip)).length;
+    const realTotal = visitorIps.size + missed.length;
+
+    res.json({
+      date,
+      isToday: date === today,
+      heartbeatActive: heartbeatCounts.size > 0,
+      counted: {
+        visitors: visitorIps.size,
+        withHeartbeat,
+        withoutHeartbeat: visitorIps.size - withHeartbeat
+      },
+      heartbeatVisitors: heartbeatCounts.size,
+      missed: {
+        total: missed.length,
+        // Anteil verpasster echter Besucher an (gezählt + verpasst), in Prozent
+        percent: realTotal > 0 ? Math.round((missed.length / realTotal) * 1000) / 10 : 0,
+        byReason,
+        ips: missed.slice(0, 25)
+      }
     });
   } catch (error) {
     console.error('Fehler:', error);

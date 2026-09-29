@@ -72,3 +72,28 @@ Einmal pro Seite reicht; doppeltes Einbinden wird erkannt und ignoriert.
 
 Das Skript wird direkt aus `/var/www/traffic-dashboard/tracking/` ausgeliefert.
 Ein `./redeploy.sh` aktualisiert es also automatisch für alle Tools.
+
+## Abdeckung prüfen: Welche echten Besucher zählt das Dashboard nicht?
+
+Ein Heartbeat beweist einen echten Menschen (JavaScript läuft, Nutzer aktiv).
+`scripts/check-coverage.js` listet alle IPs mit Heartbeat, die im Dashboard
+**nicht** als Besucher zählen – mit Grund (Spike-Filter, Cloaked-Filter,
+Bot-User-Agent, Seite aus Browser-Cache, nur Weiterleitungen). Es nutzt die
+laufende Dashboard-API, also exakt dieselbe Erkennung wie das Dashboard.
+Eigene IPs (`EXCLUDED_IPS`) sind nie enthalten.
+
+```bash
+cd /var/www/traffic-dashboard
+node scripts/check-coverage.js               # heute
+node scripts/check-coverage.js 2026-09-28    # bestimmter Tag (max. 30 Tage zurück)
+node scripts/check-coverage.js --json        # Rohdaten
+```
+
+Täglich automatisch um 23:55 (Ergebnis in eine Logdatei):
+
+```bash
+( crontab -l 2>/dev/null; echo '55 23 * * * cd /var/www/traffic-dashboard && node scripts/check-coverage.js >> /var/log/traffic-coverage.log 2>&1' ) | crontab -
+```
+
+`--warn=5` beendet das Skript mit Exit-Code 2, wenn mehr als 5 % der echten
+Besucher verpasst wurden – nützlich für eigene Alarm-Skripte.

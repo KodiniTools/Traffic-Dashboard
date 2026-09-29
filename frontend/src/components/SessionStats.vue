@@ -9,6 +9,10 @@ const props = defineProps({
 const bounceRate = computed(() => props.sessionStats?.bounceRate ?? 0)
 const avgPages = computed(() => props.sessionStats?.avgPagesPerSession ?? 0)
 const totalSessions = computed(() => props.sessionStats?.totalSessions ?? 0)
+const bounceHint = computed(() =>
+  `Anteil nicht engagierter Sessions: nur 1 Seite und höchstens ${props.sessionStats?.engagedMinSeconds ?? 10} s aktiv. ` +
+  'Wer ein Tool länger nutzt (per Heartbeat gemessen), zählt nicht als Bounce.'
+)
 </script>
 
 <template>
@@ -25,7 +29,7 @@ const totalSessions = computed(() => props.sessionStats?.totalSessions ?? 0)
 
     <div class="metrics-grid">
       <!-- Bounce Rate -->
-      <div class="metric-card">
+      <div class="metric-card" :title="bounceHint">
         <div class="metric-ring" :style="{ '--pct': bounceRate }">
           <svg viewBox="0 0 36 36">
             <path class="ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
