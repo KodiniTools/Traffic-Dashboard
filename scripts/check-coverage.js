@@ -27,7 +27,10 @@ const PM2_APP = 'traffic-dashboard-api';
 function readPm2Env() {
   try {
     const out = execFileSync('pm2', ['jlist'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000 });
-    const proc = JSON.parse(out).find(p => p.name === PM2_APP);
+    // PM2 kann vor dem JSON Hinweise ausgeben (z. B. "In-memory PM2 is out-of-date")
+    const jsonLine = out.split('\n').find(line => line.trim().startsWith('['));
+    if (!jsonLine) return {};
+    const proc = JSON.parse(jsonLine).find(p => p.name === PM2_APP);
     if (!proc || !proc.pm2_env) return {};
     return { ...(proc.pm2_env.env || {}), ...proc.pm2_env };
   } catch {
