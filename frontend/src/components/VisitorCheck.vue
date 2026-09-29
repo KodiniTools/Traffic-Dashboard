@@ -19,6 +19,24 @@ function reasonLabel(reason) {
   return reason
 }
 
+const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
+// "Di, 29.09.2026" aus YYYY-MM-DD (Kalenderdatum, unabhängig von Browser-Zeitzone)
+const dayLabel = computed(() => {
+  const d = props.data?.date
+  if (!d) return ''
+  const [y, m, day] = d.split('-').map(Number)
+  const wd = WEEKDAYS[new Date(Date.UTC(y, m - 1, day)).getUTCDay()]
+  return `${wd}, ${String(day).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`
+})
+
+// Stand der Daten in Zürcher Zeit
+const updatedAt = computed(() => {
+  const t = props.data?.generatedAt
+  if (!t) return ''
+  return new Date(t).toLocaleTimeString('de-CH', { timeZone: 'Europe/Zurich', hour: '2-digit', minute: '2-digit' })
+})
+
 function fmt(n) {
   return (n || 0).toLocaleString('de-CH')
 }
@@ -42,8 +60,11 @@ const confirmedPercent = computed(() =>
           <polyline points="22,4 12,14.01 9,11.01"/>
         </svg>
         Echte Besucher heute
+        <span class="vc-date">{{ dayLabel }}</span>
       </h3>
-      <span class="vc-sub">geprüft per Heartbeat · eigene IPs ausgeschlossen</span>
+      <span class="vc-sub">
+        00:00–24:00 Zürich<template v-if="updatedAt"> · Stand {{ updatedAt }}</template> · geprüft per Heartbeat · eigene IPs ausgeschlossen
+      </span>
     </div>
 
     <p v-if="!data.heartbeatActive" class="vc-empty">
@@ -54,7 +75,9 @@ const confirmedPercent = computed(() =>
       <div class="vc-stat confirmed" title="Besucher, deren Browser aktiv genutzt wurde (Heartbeat empfangen). Sicher echte Menschen.">
         <span class="vc-value">{{ fmt(confirmed) }}</span>
         <span class="vc-label">Sicher echt</span>
-        <span class="vc-hint">aktiver Browser bestätigt</span>
+        <span class="vc-hint">
+          aktiver Browser bestätigt<template v-if="data.carriedOver"> · {{ fmt(data.carriedOver) }} seit vor 00:00</template>
+        </span>
       </div>
 
       <div class="vc-stat" title="So viele Besucher zählt das Dashboard heute (Kachel „Besucher“ oben).">
@@ -113,6 +136,12 @@ h3 {
 }
 
 h3 svg { width: 18px; height: 18px; color: var(--accent-green); }
+
+.vc-date {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
 
 .vc-sub {
   font-size: 0.72rem;
