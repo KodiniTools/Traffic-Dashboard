@@ -637,9 +637,17 @@ function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
 }
 
 // Prüft ob ein Pfad ein statisches Asset ist (CSS/JS/Bild/Font/...)
+// Pfad-Präfixe für HTML-Bausteine, die der Browser nachlädt (z. B. Navigation
+// per fetch in Texteditor/Audio-Cutter). Das sind Ressourcen wie CSS/JS, keine
+// Seitenaufrufe – obwohl sie auf .html enden.
+const RESOURCE_PATH_PREFIXES = [
+  '/partials/'
+];
+
 function isStaticAsset(path) {
   const lowerPath = path.toLowerCase().split('?')[0];
-  return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+  return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))
+    || RESOURCE_PATH_PREFIXES.some(prefix => lowerPath.startsWith(prefix));
 }
 
 // Echte menschliche Anfrage: kein Bot UND kein statisches Asset (CSS/JS/Bild/
@@ -662,12 +670,8 @@ function isExcludedFromTopPages(path) {
   if (EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
     return true;
   }
-  // Statische Assets ausschließen (Dateiendung prüfen)
-  const lowerPath = path.toLowerCase().split('?')[0];
-  if (EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))) {
-    return true;
-  }
-  return false;
+  // Statische Assets und nachgeladene HTML-Bausteine (/partials/) ausschließen
+  return isStaticAsset(path);
 }
 
 // Middleware
