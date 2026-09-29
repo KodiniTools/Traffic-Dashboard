@@ -16,6 +16,7 @@ import UTMStats from './components/UTMStats.vue'
 import AiSourceStats from './components/AiSourceStats.vue'
 import LongestSessions from './components/LongestSessions.vue'
 import VisitorCheck from './components/VisitorCheck.vue'
+import ZurichClock from './components/ZurichClock.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -48,6 +49,24 @@ const longestSessionsMinDate = computed(() => {
 // Auto-Refresh
 let refreshInterval = null
 let liveInterval = null
+let dayWatchInterval = null
+
+// Aktuelles Kalenderdatum in Zürich (YYYY-MM-DD), inkl. Sommer-/Winterzeit
+function zurichDateString() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Zurich' })
+}
+
+// Tageswechsel um 00:00 Zürich: sofort neu laden, damit alle Tageswerte
+// (Heute, Echte Besucher, Längste Sessions) bei Null neu beginnen.
+let lastZurichDate = zurichDateString()
+function checkDayChange() {
+  const current = zurichDateString()
+  if (current === lastZurichDate) return
+  lastZurichDate = current
+  loadStats()
+  loadTodayOverview()
+  refreshLongestSessionsIfToday()
+}
 
 // Angriffs-Erkennung fürs Banner: "Angriff" = heute wurden mind. so viele
 // Anfragen als Spike gefiltert UND die Bots übersteigen die echten Besucher
@@ -178,6 +197,10 @@ function startAutoRefresh() {
   refreshInterval = setInterval(() => { loadStats(); loadTodayOverview(); refreshLongestSessionsIfToday() }, 5 * 60 * 1000)
   // Live-Daten alle 30 Sekunden
   liveInterval = setInterval(loadLive, 30 * 1000)
+  // Tageswechsel (00:00 Zürich) alle 20 Sekunden prüfen – ohne Netzwerkzugriff
+  clearInterval(dayWatchInterval)
+  lastZurichDate = zurichDateString()
+  dayWatchInterval = setInterval(checkDayChange, 20 * 1000)
   loadLive()
   loadTodayOverview()
   loadLongestSessions()
@@ -212,6 +235,7 @@ function logout() {
   longestSessionsDate.value = ''
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
+  clearInterval(dayWatchInterval)
 }
 
 // Beim Start prüfen ob API-Key vorhanden
@@ -231,6 +255,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
+  clearInterval(dayWatchInterval)
 })
 
 // Hilfsfunktion: Zürcher Datum formatieren
@@ -309,7 +334,10 @@ const lastUpdated = computed(() => {
           <p class="subtitle">kodinitools.com</p>
         </div>
       </div>
-      
+
+      <!-- Laufende Uhr in Zürcher Zeit (massgeblich für alle Tageswerte) -->
+      <ZurichClock />
+
       <div class="header-right">
         <div class="period-selector">
           <button 

@@ -637,9 +637,17 @@ function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
 }
 
 // Prüft ob ein Pfad ein statisches Asset ist (CSS/JS/Bild/Font/...)
+// Pfad-Präfixe für HTML-Bausteine, die der Browser nachlädt (z. B. Navigation
+// per fetch in Texteditor/Audio-Cutter). Das sind Ressourcen wie CSS/JS, keine
+// Seitenaufrufe – obwohl sie auf .html enden.
+const RESOURCE_PATH_PREFIXES = [
+  '/partials/'
+];
+
 function isStaticAsset(path) {
   const lowerPath = path.toLowerCase().split('?')[0];
-  return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+  return EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))
+    || RESOURCE_PATH_PREFIXES.some(prefix => lowerPath.startsWith(prefix));
 }
 
 // Echte menschliche Anfrage: kein Bot UND kein statisches Asset (CSS/JS/Bild/
@@ -662,12 +670,8 @@ function isExcludedFromTopPages(path) {
   if (EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(path))) {
     return true;
   }
-  // Statische Assets ausschließen (Dateiendung prüfen)
-  const lowerPath = path.toLowerCase().split('?')[0];
-  if (EXCLUDED_EXTENSIONS.some(ext => lowerPath.endsWith(ext))) {
-    return true;
-  }
-  return false;
+  // Statische Assets und nachgeladene HTML-Bausteine (/partials/) ausschließen
+  return isStaticAsset(path);
 }
 
 // Middleware
@@ -1588,11 +1592,15 @@ function parseDayQuery(req) {
   return { date, today };
 }
 
-// Alle Einträge (inkl. Heartbeats) eines Zürich-Kalendertages
-async function readDayEntries(date) {
-  const entries = await readLogFiles(zurichMidnight(date));
+// Alle Einträge (inkl. Heartbeats) eines Zürich-Kalendertages (00:00–24:00).
+// lookbackMs > 0: zusätzlich die Einträge kurz VOR 00:00 als .previous
+// (für Besuche, die vor Mitternacht begonnen haben und danach weiterlaufen).
+async function readDayEntries(date, { lookbackMs = 0 } = {}) {
+  const dayStart = zurichMidnight(date);
+  const entries = await readLogFiles(new Date(dayStart.getTime() - lookbackMs));
   const dayEntries = entries.filter(e => getZurichDateString(e.date) === date);
   dayEntries.heartbeats = entries.heartbeats.filter(h => getZurichDateString(h.date) === date);
+  dayEntries.previous = lookbackMs > 0 ? entries.filter(e => e.date < dayStart) : [];
   return dayEntries;
 }
 
@@ -1635,7 +1643,10 @@ app.get('/api/stats/coverage', async (req, res) => {
     const { date, today, error } = parseDayQuery(req);
     if (error) return res.status(400).json({ error });
 
-    const dayEntries = await readDayEntries(date);
+    // Heartbeat-Skript läuft max. 4 h pro Seitenaufruf -> 4 h vor 00:00 mitlesen
+    const dayEntries = await readDayEntries(date, { lookbackMs: 4 * 60 * 60 * 1000 });
+    // IPs, die schon VOR 00:00 als Besucher aktiv waren (Besuch über Mitternacht)
+    const carryOverIps = new Set(dayEntries.previous.filter(e => e.isPageView).map(e => e.ip));
 
     const byIp = new Map();
     for (const e of dayEntries) {
@@ -1651,7 +1662,7 @@ app.get('/api/stats/coverage', async (req, res) => {
     // Grund, warum eine IP mit Heartbeat nicht als Besucher zählt
     function missReason(ipEntries) {
       if (!ipEntries || ipEntries.length === 0) {
-        return 'kein-request'; // Seite aus Browser-Cache oder vor Mitternacht geladen
+        return 'kein-request'; // Seite aus dem Browser-Cache geladen
       }
       for (const name of ['spike', 'cloaked']) {
         if (ipEntries.some(e => e.botName === name)) return name;
@@ -1662,9 +1673,14 @@ app.get('/api/stats/coverage', async (req, res) => {
     }
 
     const missed = [];
+    let carriedOver = 0; // aktiv nach 00:00, Seite aber schon am Vortag geladen
     for (const [ip, heartbeats] of heartbeatCounts) {
       if (visitorIps.has(ip)) continue;
       const ipEntries = byIp.get(ip) || [];
+      if (!ipEntries.some(e => e.isPageView) && carryOverIps.has(ip)) {
+        carriedOver++;
+        continue;
+      }
       const pages = [...new Set(ipEntries.map(e => e.path.split('?')[0]))];
       missed.push({
         ip: ip.replace(/\.\d+$/, '.xxx').replace(/:[0-9a-f]*:[0-9a-f]*$/i, ':xxxx'),
@@ -1691,7 +1707,13 @@ app.get('/api/stats/coverage', async (req, res) => {
         withHeartbeat,
         withoutHeartbeat: visitorIps.size - withHeartbeat
       },
+      // Zeitraum: Zürich-Kalendertag 00:00–24:00; um 00:00 beginnt die Zählung neu
+      timezone: TIMEZONE,
+      generatedAt: new Date().toISOString(),
       heartbeatVisitors: heartbeatCounts.size,
+      // Besuche, die vor 00:00 begonnen haben und heute noch aktiv waren
+      // (in heartbeatVisitors enthalten, aber nicht "übersehen")
+      carriedOver,
       missed: {
         total: missed.length,
         // Anteil verpasster echter Besucher an (gezählt + verpasst), in Prozent
