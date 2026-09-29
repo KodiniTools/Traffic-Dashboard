@@ -14,6 +14,7 @@ import UserBehavior from './components/UserBehavior.vue'
 import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
 import UTMStats from './components/UTMStats.vue'
 import AiSourceStats from './components/AiSourceStats.vue'
+import LongestSessions from './components/LongestSessions.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -27,6 +28,20 @@ const todayOverview = ref(null)
 const loading = ref(false)
 const error = ref(null)
 const selectedPeriod = ref('week')
+
+// Längste Sessions (tagesbezogen, Zürich). Leeres Datum = heute (Server entscheidet).
+const LONGEST_SESSIONS_MAX_DAYS_BACK = 30
+const longestSessions = ref(null)
+const longestSessionsDate = ref('')
+const longestSessionsLoading = ref(false)
+const longestSessionsError = ref('')
+let longestSessionsRequestId = 0
+const zurichToday = computed(() => todayOverview.value?.zurichDate || longestSessions.value?.date || '')
+const longestSessionsMinDate = computed(() => {
+  if (!zurichToday.value) return ''
+  const [y, m, d] = zurichToday.value.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d - LONGEST_SESSIONS_MAX_DAYS_BACK)).toISOString().slice(0, 10)
+})
 
 // Auto-Refresh
 let refreshInterval = null
@@ -111,6 +126,31 @@ async function loadTodayOverview() {
   }
 }
 
+// Längste Sessions eines Tages laden (ohne Datum = heute)
+async function loadLongestSessions() {
+  const requestId = ++longestSessionsRequestId
+  longestSessionsLoading.value = true
+  longestSessionsError.value = ''
+  try {
+    const query = longestSessionsDate.value ? `?date=${encodeURIComponent(longestSessionsDate.value)}` : ''
+    const data = await fetchApi(`/stats/longest-sessions${query}`)
+    if (requestId !== longestSessionsRequestId) return // veraltete Antwort verwerfen
+    longestSessions.value = data
+    longestSessionsDate.value = data.date
+  } catch (err) {
+    if (requestId !== longestSessionsRequestId) return
+    console.error('Längste Sessions Fehler:', err)
+    longestSessionsError.value = 'Sessions konnten nicht geladen werden'
+  } finally {
+    if (requestId === longestSessionsRequestId) longestSessionsLoading.value = false
+  }
+}
+
+function changeLongestSessionsDate(date) {
+  longestSessionsDate.value = date
+  loadLongestSessions()
+}
+
 // Live-Daten laden
 async function loadLive() {
   try {
@@ -123,11 +163,21 @@ async function loadLive() {
 // Auto-Refresh starten
 function startAutoRefresh() {
   // Hauptdaten alle 5 Minuten
-  refreshInterval = setInterval(() => { loadStats(); loadTodayOverview() }, 5 * 60 * 1000)
+  refreshInterval = setInterval(() => { loadStats(); loadTodayOverview(); refreshLongestSessionsIfToday() }, 5 * 60 * 1000)
   // Live-Daten alle 30 Sekunden
   liveInterval = setInterval(loadLive, 30 * 1000)
   loadLive()
   loadTodayOverview()
+  loadLongestSessions()
+}
+
+// Nur der laufende Tag ändert sich noch – vergangene Tage nicht neu laden.
+// Nach Mitternacht springt "heute" automatisch auf den neuen Tag.
+function refreshLongestSessionsIfToday() {
+  if (!longestSessions.value || longestSessions.value.isToday) {
+    longestSessionsDate.value = ''
+    loadLongestSessions()
+  }
 }
 
 // Zeitraum wechseln
@@ -145,6 +195,8 @@ function logout() {
   stats.value = null
   liveStats.value = null
   todayOverview.value = null
+  longestSessions.value = null
+  longestSessionsDate.value = ''
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
 }
@@ -439,6 +491,17 @@ const lastUpdated = computed(() => {
             :osSystems="stats.osSystems"
           />
         </div>
+
+        <!-- Längste Sessions des Tages (tagesbezogen, unabhängig vom Zeitraum) -->
+        <LongestSessions
+          :data="longestSessions"
+          :date="longestSessionsDate"
+          :maxDate="zurichToday"
+          :minDate="longestSessionsMinDate"
+          :loading="longestSessionsLoading"
+          :error="longestSessionsError"
+          @change-date="changeLongestSessionsDate"
+        />
 
         <!-- Nutzerverhalten & Bandwidth -->
         <div class="analytics-row">

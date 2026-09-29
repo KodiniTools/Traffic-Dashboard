@@ -10,6 +10,8 @@ Ein modernes Echtzeit-Traffic-Dashboard für deinen VPS, das Nginx-Logs direkt a
 - 🔗 **Referrer-Tracking**: Woher kommen deine Besucher?
 - 📄 **Top-Seiten**: Welche Seiten werden am meisten besucht?
 - ⚡ **Live-Feed**: Echtzeit-Anzeige der letzten Requests
+- ⏱️ **Längste Sessions**: Die 15 längsten Sessions pro Tag mit Dauer und Tool (Tagesauswahl, bis 30 Tage zurück)
+- 💓 **Heartbeat (optional)**: Echte Verweildauer in den Tools messen – siehe [`tracking/README.md`](tracking/README.md)
 - 🔒 **API-Key Auth**: Einfache Authentifizierung
 
 ## Architektur

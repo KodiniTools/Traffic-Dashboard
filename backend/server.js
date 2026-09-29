@@ -64,6 +64,15 @@ const CLOAKED_BOT_DETECTION = {
   // 'enabled: false' setzen, sonst würden echte Besucher fehlklassifiziert.
 };
 
+// Heartbeat-Auswertung (echte Verweildauer)
+// Das optionale Skript tracking/heartbeat.js meldet sich in aktiven Tabs
+// regelmäßig unter diesem Pfad (Nginx antwortet mit 204, der Aufruf landet im
+// Access-Log). Heartbeats sind KEINE Seitenaufrufe/Requests: Sie werden separat
+// gesammelt und verlängern nur bestehende Sessions derselben IP. Solange kein
+// Tool das Skript einbindet, ändert sich an keiner Statistik etwas.
+const HEARTBEAT_PATH = '/__kt_hb';
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
@@ -267,10 +276,20 @@ function detectOS(ua) {
 }
 
 // Sessions aus Einträgen aufbauen (30 Min Timeout)
+// Eine Session ist ein Array von Seitenaufrufen. Zusätzlich trägt sie
+// "lastActivity" (Date): letzter Seitenaufruf ODER letzter Heartbeat.
+// Heartbeats (entries.heartbeats) verlängern nur laufende Sessions derselben IP,
+// eröffnen aber nie eine neue.
 function buildSessions(entries) {
-  const SESSION_TIMEOUT = 30 * 60 * 1000;
+  const SESSION_TIMEOUT = SESSION_TIMEOUT_MS;
   const humanEntries = entries.filter(e => e.isPageView);
   if (humanEntries.length === 0) return [];
+
+  const heartbeatsByIp = {};
+  for (const hb of entries.heartbeats || []) {
+    if (!heartbeatsByIp[hb.ip]) heartbeatsByIp[hb.ip] = [];
+    heartbeatsByIp[hb.ip].push(hb);
+  }
 
   const byIp = {};
   for (const entry of humanEntries) {
@@ -279,20 +298,92 @@ function buildSessions(entries) {
   }
 
   const sessions = [];
-  for (const ipEntries of Object.values(byIp)) {
-    ipEntries.sort((a, b) => a.date - b.date);
-    let session = [ipEntries[0]];
-    for (let i = 1; i < ipEntries.length; i++) {
-      if (ipEntries[i].date - ipEntries[i - 1].date > SESSION_TIMEOUT) {
-        sessions.push(session);
-        session = [ipEntries[i]];
-      } else {
-        session.push(ipEntries[i]);
+  for (const [ip, ipEntries] of Object.entries(byIp)) {
+    const heartbeats = heartbeatsByIp[ip];
+    // Zeitlinie aus Seitenaufrufen und (falls vorhanden) Heartbeats
+    const timeline = heartbeats
+      ? [...ipEntries, ...heartbeats].sort((a, b) => a.date - b.date)
+      : ipEntries.sort((a, b) => a.date - b.date);
+
+    let session = null;
+    for (const item of timeline) {
+      const expired = session && item.date - session.lastActivity > SESSION_TIMEOUT;
+      if (item.isHeartbeat) {
+        if (expired) { sessions.push(session); session = null; }
+        if (session) session.lastActivity = item.date;
+        continue;
       }
+      if (!session || expired) {
+        if (session) sessions.push(session);
+        session = [item];
+      } else {
+        session.push(item);
+      }
+      session.lastActivity = item.date;
     }
-    sessions.push(session);
+    if (session) sessions.push(session);
   }
   return sessions;
+}
+
+// Session-Dauer in Sekunden: erster Seitenaufruf bis letzte Aktivität
+// (Seitenaufruf oder Heartbeat).
+function getSessionDuration(session) {
+  const end = session.lastActivity || session[session.length - 1].date;
+  return Math.max(0, (end - session[0].date) / 1000);
+}
+
+// Tool-Name aus einem Pfad ableiten: erstes Pfadsegment (kodinitools.com/<tool>/...).
+// Ein vorangestelltes Sprach-Segment (/de/<tool>, /en-us/<tool>) wird übersprungen.
+// "/" bzw. leere Pfade zählen als Startseite.
+const LANG_SEGMENT = /^[a-z]{2}(-[a-z]{2})?$/i;
+function extractTool(path) {
+  const clean = (path || '').split('?')[0].split('#')[0];
+  const segments = clean.split('/').filter(Boolean);
+  if (segments.length > 1 && LANG_SEGMENT.test(segments[0])) segments.shift();
+  if (segments.length === 0) return 'Startseite';
+  try {
+    return decodeURIComponent(segments[0]);
+  } catch {
+    return segments[0];
+  }
+}
+
+// Die N längsten Sessions (Dauer = letzter minus erster Seitenaufruf).
+// Sessions ohne messbare Dauer (1 Seite ohne Heartbeat, oder alle Aufrufe in
+// derselben Sekunde) werden ignoriert.
+function getLongestSessions(sessions, limit = 15) {
+  return sessions
+    .map(s => ({ session: s, duration: getSessionDuration(s) }))
+    .filter(x => x.duration > 0)
+    .sort((a, b) => b.duration - a.duration)
+    .slice(0, limit)
+    .map(({ session, duration }) => {
+      const toolCounts = {};
+      for (const e of session) {
+        const tool = extractTool(e.path);
+        toolCounts[tool] = (toolCounts[tool] || 0) + 1;
+      }
+      // Haupt-Tool = meiste Seitenaufrufe; bei Gleichstand das zuerst besuchte
+      const toolOrder = [...new Set(session.map(e => extractTool(e.path)))];
+      const tools = toolOrder
+        .map(name => ({ name, views: toolCounts[name] }))
+        .sort((a, b) => b.views - a.views);
+      const first = session[0];
+      return {
+        start: first.date.toISOString(),
+        end: new Date(session[0].date.getTime() + duration * 1000).toISOString(),
+        durationSeconds: Math.round(duration),
+        pageViews: session.length,
+        // true = Dauer stammt (auch) aus Heartbeats, also echte Verweildauer
+        heartbeat: session.lastActivity > session[session.length - 1].date,
+        tool: tools[0].name,
+        tools,
+        entryPage: first.path.split('?')[0],
+        device: detectDevice(first.userAgent),
+        ip: first.ip.replace(/\.\d+$/, '.xxx').replace(/:[0-9a-f]*:[0-9a-f]*$/i, ':xxxx')
+      };
+    });
 }
 
 // Verhaltensbasierte Bot-Erkennung (Post-Processing über die geladenen Einträge).
@@ -623,6 +714,13 @@ function parseLogLine(line) {
     return null;
   }
 
+  // Heartbeats (tracking/heartbeat.js): eigener Eintragstyp, landet NICHT in
+  // der normalen Eintragsliste (siehe readLogFiles). Bot-UAs werden verworfen.
+  if (isHeartbeatPath(path)) {
+    if (!userAgent || userAgent === '-' || BOT_PATTERNS.test(userAgent)) return null;
+    return { ip, date, isHeartbeat: true };
+  }
+
   // XHR-/API-/Polling-Endpunkte komplett ausschließen (kein zählbarer Traffic
   // für ein Besucher-Dashboard – siehe API_PATH_PATTERNS). Verhindert, dass das
   // Hintergrund-Polling der Seite die Gesamt-Request-Zahl aufbläht.
@@ -691,15 +789,29 @@ function parseLogLine(line) {
     utmCampaign,
     utmTerm,
     utmContent,
-    // Echte Seitenanfrage: GET + nicht-Bot + kein statisches Asset
+    // Echte Seitenanfrage: GET + nicht-Bot + kein statisches Asset + keine
+    // Weiterleitung. Ein 301/302 (z. B. /blog -> /blog/) ist kein gesehener
+    // Inhalt: Der Browser folgt sofort und lädt die Zielseite (die zählt).
+    // 304 (Not Modified) ist dagegen ein echter Aufruf aus dem Cache.
     isPageView: method === 'GET' && !isBot && !isExcludedFromTopPages(path) && path !== '-'
+      && !isRedirectStatus(statusCode)
   };
+}
+
+function isRedirectStatus(status) {
+  return status >= 300 && status < 400 && status !== 304;
+}
+
+// Heartbeat-Zeile? (GET oder POST/sendBeacon auf HEARTBEAT_PATH, mit/ohne Query)
+function isHeartbeatPath(path) {
+  return path === HEARTBEAT_PATH || path.startsWith(HEARTBEAT_PATH + '?');
 }
 
 // Log-Dateien lesen (mit gzip Unterstützung)
 // Akzeptiert entweder Anzahl Tage (Number) oder ein Start-Datum (Date) als Cutoff
 async function readLogFiles(daysBackOrSinceDate = 1) {
   const entries = [];
+  const heartbeats = []; // separat: keine Requests, nur für Session-Dauer
   let cutoffDate;
   let daysBack;
 
@@ -718,7 +830,7 @@ async function readLogFiles(daysBackOrSinceDate = 1) {
     for (const line of content.split('\n')) {
       const parsed = parseLogLine(line);
       if (parsed && parsed.date >= cutoffDate) {
-        entries.push(parsed);
+        (parsed.isHeartbeat ? heartbeats : entries).push(parsed);
       }
     }
   } catch (err) {
@@ -751,7 +863,7 @@ async function readLogFiles(daysBackOrSinceDate = 1) {
       for (const line of content.split('\n')) {
         const parsed = parseLogLine(line);
         if (parsed && parsed.date >= cutoffDate) {
-          entries.push(parsed);
+          (parsed.isHeartbeat ? heartbeats : entries).push(parsed);
         }
       }
     } catch (err) {
@@ -763,6 +875,7 @@ async function readLogFiles(daysBackOrSinceDate = 1) {
   // Markiert getarnte Spike-/Swarm-Anfragen als Bot, bevor irgendeine
   // Auswertung sie als echte Besucher zählt.
   entries.spikeDetection = detectBehavioralBots(entries);
+  entries.heartbeats = heartbeats;
 
   return entries;
 }
@@ -1039,11 +1152,12 @@ function aggregateStats(entries) {
   const sessionDurations = [];
   const durationBuckets = { 'bounce': 0, '0-30s': 0, '30s-2m': 0, '2-5m': 0, '5-15m': 0, '15m+': 0 };
   for (const session of sessions) {
-    if (session.length === 1) {
+    // Dauer inkl. Heartbeats; eine Seite ohne Heartbeat = bounce (wie bisher)
+    const duration = getSessionDuration(session); // Sekunden
+    if (session.length === 1 && duration === 0) {
       sessionDurations.push(0);
       durationBuckets['bounce']++;
     } else {
-      const duration = (session[session.length - 1].date - session[0].date) / 1000; // Sekunden
       sessionDurations.push(duration);
       if (duration <= 30) durationBuckets['0-30s']++;
       else if (duration <= 120) durationBuckets['30s-2m']++;
@@ -1125,9 +1239,7 @@ function aggregateStats(entries) {
   const engagementScores = { low: 0, medium: 0, high: 0, veryHigh: 0 };
   for (const session of sessions) {
     const pageCount = session.length;
-    const duration = session.length > 1
-      ? (session[session.length - 1].date - session[0].date) / 1000
-      : 0;
+    const duration = getSessionDuration(session);
     // Score: Seiten * 2 + Dauer(min) * 3
     const score = pageCount * 2 + (duration / 60) * 3;
     if (score <= 2) engagementScores.low++;
@@ -1411,6 +1523,46 @@ app.get('/api/stats/today-overview', async (req, res) => {
     }
 
     res.json(stats);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Die 15 längsten Sessions eines Tages (Zürich, 00:00 - 24:00)
+// Query: ?date=YYYY-MM-DD (Standard: heute, max. 30 Tage zurück)
+const LONGEST_SESSIONS_MAX_DAYS_BACK = 30;
+app.get('/api/stats/longest-sessions', async (req, res) => {
+  try {
+    const today = getZurichToday();
+    const date = typeof req.query.date === 'string' && req.query.date ? req.query.date : today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || getZurichDateString(zurichMidnight(date)) !== date) {
+      return res.status(400).json({ error: 'Ungültiges Datum (erwartet YYYY-MM-DD)' });
+    }
+    const dayStart = zurichMidnight(date);
+    const todayStart = zurichMidnight(today);
+    const daysBack = Math.round((todayStart - dayStart) / 86400000);
+    if (daysBack < 0 || daysBack > LONGEST_SESSIONS_MAX_DAYS_BACK) {
+      return res.status(400).json({ error: `Datum muss zwischen heute und ${LONGEST_SESSIONS_MAX_DAYS_BACK} Tagen zurück liegen` });
+    }
+
+    const entries = await readLogFiles(dayStart);
+    const dayEntries = entries.filter(e => getZurichDateString(e.date) === date);
+    dayEntries.heartbeats = entries.heartbeats.filter(h => getZurichDateString(h.date) === date);
+    const sessions = buildSessions(dayEntries);
+    const durations = sessions.map(getSessionDuration);
+
+    res.json({
+      date,
+      isToday: date === today,
+      totalSessions: sessions.length,
+      // Aufschlüsselung, damit klar ist, warum nicht alle Sessions gelistet sind
+      measuredSessions: durations.filter(d => d > 0).length,
+      singlePageSessions: sessions.filter((s, i) => s.length === 1 && durations[i] === 0).length,
+      zeroDurationSessions: sessions.filter((s, i) => s.length > 1 && durations[i] === 0).length,
+      heartbeatActive: dayEntries.heartbeats.length > 0,
+      sessions: getLongestSessions(sessions, 15)
+    });
   } catch (error) {
     console.error('Fehler:', error);
     res.status(500).json({ error: error.message });
