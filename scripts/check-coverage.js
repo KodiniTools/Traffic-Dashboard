@@ -47,15 +47,39 @@ function readEcosystemEnv() {
   }
 }
 
-// Reihenfolge: $DASHBOARD_API_KEY > laufender PM2-Prozess > ecosystem.config.cjs
+// backend/.env (KEY=VALUE) – dieselbe Datei, die auch das Dashboard liest
+function readLocalEnv() {
+  const env = {};
+  try {
+    const content = require('fs').readFileSync(path.join(__dirname, '..', 'backend', '.env'), 'utf-8');
+    for (const line of content.split('\n')) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i);
+      if (m && !line.trim().startsWith('#')) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+    }
+  } catch {
+    // keine .env vorhanden
+  }
+  return env;
+}
+
+// Standard-Key des Dashboards (gilt, solange kein Key gesetzt ist)
+const DEFAULT_API_KEY = 'dein-geheimer-api-key-hier';
+
+// Reihenfolge wie im Dashboard: $DASHBOARD_API_KEY > PM2-Prozess > backend/.env
+// > Standard-Key. ecosystem.config.cjs nur für PORT (enthält einen Platzhalter-Key).
 function loadConfig() {
   const pm2 = readPm2Env();
+  const local = readLocalEnv();
   const eco = readEcosystemEnv();
-  const pick = key => process.env[key] || pm2[key] || eco[key];
-  const source = process.env.DASHBOARD_API_KEY ? 'Umgebungsvariable'
-    : pm2.DASHBOARD_API_KEY ? 'PM2-Prozess'
-    : eco.DASHBOARD_API_KEY ? 'ecosystem.config.cjs' : null;
-  return { apiKey: pick('DASHBOARD_API_KEY'), port: pick('PORT') || 3847, source };
+  const sources = [
+    ['Umgebungsvariable', process.env.DASHBOARD_API_KEY],
+    ['PM2-Prozess', pm2.DASHBOARD_API_KEY],
+    ['backend/.env', local.DASHBOARD_API_KEY],
+    ['Standard-Key', DEFAULT_API_KEY]
+  ];
+  const [source, apiKey] = sources.find(([, key]) => key);
+  const port = process.env.PORT || pm2.PORT || local.PORT || eco.PORT || 3847;
+  return { apiKey, port, source };
 }
 
 function parseArgs(argv) {

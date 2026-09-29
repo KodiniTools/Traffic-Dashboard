@@ -15,6 +15,7 @@ import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
 import UTMStats from './components/UTMStats.vue'
 import AiSourceStats from './components/AiSourceStats.vue'
 import LongestSessions from './components/LongestSessions.vue'
+import VisitorCheck from './components/VisitorCheck.vue'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -25,6 +26,7 @@ const authError = ref('')
 const stats = ref(null)
 const liveStats = ref(null)
 const todayOverview = ref(null)
+const visitorCheck = ref(null) // /stats/coverage (heute): Heartbeat-geprüfte Besucher
 const loading = ref(false)
 const error = ref(null)
 const selectedPeriod = ref('week')
@@ -124,6 +126,16 @@ async function loadTodayOverview() {
   } catch (err) {
     console.error('Heute-Übersicht Fehler:', err)
   }
+  loadVisitorCheck()
+}
+
+// Echtheits-Check (heute). Fehler sind nicht kritisch – Kachel bleibt dann aus.
+async function loadVisitorCheck() {
+  try {
+    visitorCheck.value = await fetchApi('/stats/coverage')
+  } catch (err) {
+    console.error('Besucher-Check Fehler:', err)
+  }
 }
 
 // Längste Sessions eines Tages laden (ohne Datum = heute)
@@ -195,6 +207,7 @@ function logout() {
   stats.value = null
   liveStats.value = null
   todayOverview.value = null
+  visitorCheck.value = null
   longestSessions.value = null
   longestSessionsDate.value = ''
   clearInterval(refreshInterval)
@@ -387,6 +400,9 @@ const lastUpdated = computed(() => {
             </div>
           </div>
         </div>
+
+        <!-- Echte Besucher heute (Heartbeat-geprüft) -->
+        <VisitorCheck :data="visitorCheck" />
 
         <!-- Warnung: verhaltensbasiert gefilterte Spike-/Swarm-Anfragen.
              Immer tagesbezogen (Zürich), setzt sich um 00:00 automatisch auf Null
