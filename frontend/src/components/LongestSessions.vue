@@ -13,6 +13,12 @@ const props = defineProps({
 const emit = defineEmits(['change-date'])
 
 const sessions = computed(() => props.data?.sessions || [])
+const measured = computed(() => props.data?.measuredSessions ?? sessions.value.length)
+const singlePageHint = 'Nur ein Seitenaufruf und kein Heartbeat – die Verweildauer ist aus dem Server-Log nicht ermittelbar'
+
+function fmt(n) {
+  return (n || 0).toLocaleString('de-CH')
+}
 const maxDuration = computed(() => Math.max(...sessions.value.map(s => s.durationSeconds), 1))
 
 function formatDuration(totalSeconds) {
@@ -60,7 +66,6 @@ function shiftDay(delta) {
           <polyline points="12,6 12,12 16,14"/>
         </svg>
         Längste Sessions des Tages
-        <span v-if="data" class="subtle">Top {{ sessions.length }} von {{ data.totalSessions.toLocaleString('de-CH') }}</span>
       </h3>
 
       <div class="date-nav">
@@ -77,6 +82,22 @@ function shiftDay(delta) {
         <button v-if="date !== maxDate" class="today-btn" :disabled="loading" @click="emit('change-date', maxDate)">Heute</button>
       </div>
     </div>
+
+    <!-- Aufschlüsselung: warum nicht alle Sessions in der Liste stehen -->
+    <div v-if="data" class="breakdown">
+      <span><strong>{{ fmt(data.totalSessions) }}</strong> Sessions gesamt</span>
+      <span class="sep">·</span>
+      <span><strong>{{ fmt(measured) }}</strong> mit messbarer Dauer<template v-if="measured > sessions.length"> (Top {{ sessions.length }} gezeigt)</template></span>
+      <span class="sep">·</span>
+      <span :title="singlePageHint"><strong>{{ fmt(data.singlePageSessions ?? 0) }}</strong> nur 1 Seite</span>
+      <template v-if="data.zeroDurationSessions">
+        <span class="sep">·</span>
+        <span title="Mehrere Aufrufe in derselben Sekunde"><strong>{{ fmt(data.zeroDurationSessions) }}</strong> ohne Zeitabstand</span>
+      </template>
+    </div>
+    <p v-if="data && !data.heartbeatActive" class="hint">
+      Dauer = Zeit zwischen erstem und letztem Seitenaufruf. Wer nur eine Seite öffnet und dort arbeitet, hat keine messbare Dauer.
+    </p>
 
     <p v-if="error" class="state error">{{ error }}</p>
     <p v-else-if="loading && !data" class="state">Lade Sessions...</p>
@@ -100,6 +121,7 @@ function shiftDay(delta) {
             <td class="tool" :title="toolsTitle(s)">
               <span class="tool-name">{{ s.tool }}</span>
               <span v-if="s.tools.length > 1" class="tool-more">+{{ s.tools.length - 1 }}</span>
+              <span v-if="s.heartbeat" class="hb-badge" title="Dauer per Heartbeat gemessen (echte Verweildauer)">live</span>
             </td>
             <td class="num">
               <div class="duration">
@@ -227,6 +249,34 @@ tr:last-child td { border-bottom: none; }
 }
 
 .tool-name { font-weight: 500; }
+
+.hb-badge {
+  margin-left: 0.375rem;
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+  border-radius: 4px;
+  padding: 0 0.25rem;
+}
+
+.breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.breakdown strong { color: var(--text-primary); font-family: var(--font-mono); }
+.breakdown .sep { color: var(--text-muted); }
+
+.hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
 
 .tool-more {
   margin-left: 0.375rem;
