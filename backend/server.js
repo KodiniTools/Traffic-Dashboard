@@ -9,16 +9,45 @@ const readline = require('readline');
 const { createReadStream } = require('fs');
 const { createGunzip } = require('zlib');
 
+const path = require('path');
+
+// Lokale Server-Konfiguration aus backend/.env (KEY=VALUE pro Zeile).
+// Die Datei ist per .gitignore vom Repo ausgeschlossen und überlebt daher jedes
+// redeploy.sh. Bereits gesetzte Umgebungsvariablen (PM2) haben Vorrang.
+function loadLocalEnv(file) {
+  let content;
+  try {
+    content = require('fs').readFileSync(file, 'utf-8');
+  } catch {
+    return; // keine .env vorhanden – ok
+  }
+  for (const line of content.split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i);
+    if (!m || line.trim().startsWith('#')) continue;
+    const value = m[2].replace(/^(['"])(.*)\1$/, '$2');
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+  }
+}
+loadLocalEnv(path.join(__dirname, '.env'));
+
 const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3847;
 
+// Unsicherer Standard-Key: steht öffentlich im Repo. Nur als Fallback, damit ein
+// bestehendes Setup nicht plötzlich ausgesperrt wird – beim Start wird gewarnt.
+const DEFAULT_API_KEY = 'dein-geheimer-api-key-hier';
+
 // Konfiguration
 const CONFIG = {
   logPath: '/var/log/nginx/kodinitools.com.access.log',
-  // API Key für einfache Authentifizierung (ändere diesen Wert!)
-  apiKey: process.env.DASHBOARD_API_KEY || 'dein-geheimer-api-key-hier'
+  // API-Key: in backend/.env setzen (DASHBOARD_API_KEY=...), siehe README
+  apiKey: process.env.DASHBOARD_API_KEY || DEFAULT_API_KEY
 };
+if (CONFIG.apiKey === DEFAULT_API_KEY) {
+  console.warn('WARNUNG: Kein DASHBOARD_API_KEY gesetzt – es gilt der öffentlich bekannte Standard-Key. ' +
+    'Bitte in backend/.env setzen (siehe README, Abschnitt API-Key).');
+}
 
 // Verhaltensbasierte Spike-/Swarm-Erkennung
 // Erkennt plötzliche Anfrage-Wellen, die sich als echte Besucher tarnen

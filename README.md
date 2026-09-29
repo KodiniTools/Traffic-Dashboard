@@ -69,17 +69,23 @@ pm2 save
 
 ## Konfiguration
 
-### API-Key ändern
+### API-Key setzen (wichtig)
 
-In `ecosystem.config.cjs`:
+Ohne gesetzten Key gilt ein öffentlich bekannter Standard-Key (das Backend warnt
+beim Start). Den Key in `backend/.env` ablegen – die Datei ist nicht im Git und
+bleibt bei jedem `./redeploy.sh` erhalten:
 
-```javascript
-env: {
-  DASHBOARD_API_KEY: 'dein-super-sicherer-key-mindestens-32-zeichen'
-}
+```bash
+cd /var/www/traffic-dashboard
+echo "DASHBOARD_API_KEY=$(openssl rand -hex 24)" > backend/.env
+chmod 600 backend/.env
+cat backend/.env                                  # neuen Key notieren
+pm2 restart traffic-dashboard-api
 ```
 
-Nach Änderung: `pm2 restart traffic-dashboard-api`
+Danach im Dashboard abmelden und mit dem neuen Key anmelden.
+`scripts/check-coverage.js` liest denselben Key automatisch.
+Ein in PM2 gesetzter `DASHBOARD_API_KEY` hat Vorrang vor `backend/.env`.
 
 ### Log-Pfad anpassen
 
