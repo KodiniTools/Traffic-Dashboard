@@ -73,6 +73,12 @@ const CLOAKED_BOT_DETECTION = {
 const HEARTBEAT_PATH = '/__kt_hb';
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
+// Bounce-Definition wie Google Analytics 4: Eine Session ist "engagiert", wenn
+// sie mind. 2 Seitenaufrufe hat ODER länger als ENGAGED_MIN_SECONDS dauert.
+// Bounce = nicht engagiert. Ohne Heartbeat hat eine 1-Seiten-Session immer
+// Dauer 0 – dann entspricht das exakt der alten Definition (1 Seite = Bounce).
+const ENGAGED_MIN_SECONDS = 10;
+
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
@@ -324,6 +330,10 @@ function buildSessions(entries) {
     if (session) sessions.push(session);
   }
   return sessions;
+}
+
+function isEngagedSession(session) {
+  return session.length > 1 || getSessionDuration(session) > ENGAGED_MIN_SECONDS;
 }
 
 // Session-Dauer in Sekunden: erster Seitenaufruf bis letzte Aktivität
@@ -1049,12 +1059,15 @@ function aggregateStats(entries) {
   // 2. Session-Analyse
   const sessions = buildSessions(entries);
   const totalSessions = sessions.length;
-  const bounceSessions = sessions.filter(s => s.length === 1).length;
+  const bounceSessions = sessions.filter(s => !isEngagedSession(s)).length;
   const totalPagesInSessions = sessions.reduce((sum, s) => sum + s.length, 0);
 
   stats.sessionStats = {
     totalSessions,
+    // Bounce = nicht engagierte Session (GA4-Definition, siehe ENGAGED_MIN_SECONDS)
     bounceRate: totalSessions > 0 ? Math.round((bounceSessions / totalSessions) * 100) : 0,
+    engagedSessions: totalSessions - bounceSessions,
+    engagedMinSeconds: ENGAGED_MIN_SECONDS,
     avgPagesPerSession: totalSessions > 0 ? parseFloat((totalPagesInSessions / totalSessions).toFixed(1)) : 0
   };
 
