@@ -18,19 +18,41 @@
 'use strict';
 
 const path = require('path');
+const { execFileSync } = require('child_process');
 
-function loadConfig() {
-  let env = {};
+const PM2_APP = 'traffic-dashboard-api';
+
+// Umgebung des LAUFENDEN Dashboard-Prozesses aus PM2 lesen – dort steht der
+// tatsächlich verwendete API-Key (kann von ecosystem.config.cjs abweichen).
+function readPm2Env() {
+  try {
+    const out = execFileSync('pm2', ['jlist'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000 });
+    const proc = JSON.parse(out).find(p => p.name === PM2_APP);
+    if (!proc || !proc.pm2_env) return {};
+    return { ...(proc.pm2_env.env || {}), ...proc.pm2_env };
+  } catch {
+    return {}; // pm2 nicht im PATH (z. B. Cron) oder nicht installiert
+  }
+}
+
+function readEcosystemEnv() {
   try {
     const eco = require(path.join(__dirname, '..', 'ecosystem.config.cjs'));
-    env = (eco.apps && eco.apps[0] && eco.apps[0].env) || {};
+    return (eco.apps && eco.apps[0] && eco.apps[0].env) || {};
   } catch {
-    // ecosystem.config.cjs fehlt – nur Umgebungsvariablen nutzen
+    return {};
   }
-  return {
-    apiKey: process.env.DASHBOARD_API_KEY || env.DASHBOARD_API_KEY,
-    port: process.env.PORT || env.PORT || 3847
-  };
+}
+
+// Reihenfolge: $DASHBOARD_API_KEY > laufender PM2-Prozess > ecosystem.config.cjs
+function loadConfig() {
+  const pm2 = readPm2Env();
+  const eco = readEcosystemEnv();
+  const pick = key => process.env[key] || pm2[key] || eco[key];
+  const source = process.env.DASHBOARD_API_KEY ? 'Umgebungsvariable'
+    : pm2.DASHBOARD_API_KEY ? 'PM2-Prozess'
+    : eco.DASHBOARD_API_KEY ? 'ecosystem.config.cjs' : null;
+  return { apiKey: pick('DASHBOARD_API_KEY'), port: pick('PORT') || 3847, source };
 }
 
 function parseArgs(argv) {
@@ -62,7 +84,7 @@ function describeReason(reason) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const { apiKey, port } = loadConfig();
+  const { apiKey, port, source } = loadConfig();
   if (!apiKey) {
     console.error('Kein API-Key gefunden (DASHBOARD_API_KEY oder ecosystem.config.cjs).');
     process.exit(1);
@@ -79,6 +101,12 @@ async function main() {
     process.exit(1);
   }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    console.error(`Fehler 401: API-Key abgelehnt (Key-Quelle: ${source}).`);
+    console.error('Den Key mitgeben, mit dem du dich im Dashboard anmeldest:');
+    console.error("  DASHBOARD_API_KEY='DEIN-KEY' node scripts/check-coverage.js");
+    process.exit(1);
+  }
   if (!res.ok) {
     console.error(`Fehler ${res.status}: ${data.error || 'unbekannt'}`);
     process.exit(1);

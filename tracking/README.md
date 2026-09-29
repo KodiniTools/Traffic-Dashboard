@@ -92,8 +92,12 @@ node scripts/check-coverage.js --json        # Rohdaten
 Täglich automatisch um 23:55 (Ergebnis in eine Logdatei):
 
 ```bash
-( crontab -l 2>/dev/null; echo '55 23 * * * cd /var/www/traffic-dashboard && node scripts/check-coverage.js >> /var/log/traffic-coverage.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null; echo "55 23 * * * cd /var/www/traffic-dashboard && PATH=$PATH node scripts/check-coverage.js >> /var/log/traffic-coverage.log 2>&1" ) | crontab -
 ```
+
+`PATH=$PATH` übernimmt beim Einrichten den aktuellen Suchpfad, damit Cron `node`
+und `pm2` findet. Der API-Key wird aus dem laufenden PM2-Prozess gelesen
+(Reihenfolge: `$DASHBOARD_API_KEY` > PM2-Prozess > `ecosystem.config.cjs`).
 
 `--warn=5` beendet das Skript mit Exit-Code 2, wenn mehr als 5 % der echten
 Besucher verpasst wurden – nützlich für eigene Alarm-Skripte.
