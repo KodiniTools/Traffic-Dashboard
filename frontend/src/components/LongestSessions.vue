@@ -40,7 +40,9 @@ function formatTime(iso) {
 }
 
 function toolsTitle(session) {
-  return session.tools.map(t => `${t.name} (${t.views})`).join(', ')
+  const lines = session.tools.map(t => `${t.name} (${t.views})`)
+  if (session.entryPage) lines.push(`Einstieg: ${session.entryPage}`)
+  return lines.join('\n')
 }
 
 function onDateInput(event) {

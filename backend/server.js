@@ -375,17 +375,24 @@ function getSessionDuration(session) {
 // Tool-Name aus einem Pfad ableiten: erstes Pfadsegment (kodinitools.com/<tool>/...).
 // Ein vorangestelltes Sprach-Segment (/de/<tool>, /en-us/<tool>) wird übersprungen.
 // "/" bzw. leere Pfade zählen als Startseite.
+// Blog-Beiträge behalten ihren Slug ("blog: audio-schneiden-online"), damit
+// sichtbar ist, welcher Beitrag gelesen wurde; die Übersicht /blog/ bleibt "blog".
 const LANG_SEGMENT = /^[a-z]{2}(-[a-z]{2})?$/i;
+function safeDecode(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
 function extractTool(path) {
   const clean = (path || '').split('?')[0].split('#')[0];
   const segments = clean.split('/').filter(Boolean);
   if (segments.length > 1 && LANG_SEGMENT.test(segments[0])) segments.shift();
   if (segments.length === 0) return 'Startseite';
-  try {
-    return decodeURIComponent(segments[0]);
-  } catch {
-    return segments[0];
-  }
+  const tool = safeDecode(segments[0]);
+  if (tool === 'blog' && segments.length > 1) return `blog: ${safeDecode(segments[1])}`;
+  return tool;
 }
 
 // Die N längsten Sessions (Dauer = letzter minus erster Seitenaufruf).
