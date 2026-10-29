@@ -1001,12 +1001,12 @@ function aggregateStats(entries) {
     const statusGroup = `${Math.floor(entry.status / 100)}xx`;
     stats.statusCodes[statusGroup] = (stats.statusCodes[statusGroup] || 0) + 1;
     
-    // Top Pages (nur echte Seitenbesuche von Menschen)
-    if (!entry.isBot && entry.path !== '-') {
+    // Top Pages: dieselbe Regel wie die Kachel "Seitenaufrufe" (isPageView =
+    // GET, kein Bot, kein Asset, keine Weiterleitung). POST/HEAD-Anfragen und
+    // 301/302 zählen hier also nicht mehr mit.
+    if (entry.isPageView) {
       const cleanPath = entry.path.split('?')[0]; // Query-Parameter entfernen
-      if (!isExcludedFromTopPages(cleanPath)) {
-        stats.topPages[cleanPath] = (stats.topPages[cleanPath] || 0) + 1;
-      }
+      stats.topPages[cleanPath] = (stats.topPages[cleanPath] || 0) + 1;
     }
     
     // Top Referrers (nur von echten Seitenbesuchen, keine Bots)
@@ -1059,10 +1059,6 @@ function aggregateStats(entries) {
   }
   
   // Top Listen sortieren und limitieren
-  stats.topPages = Object.entries(stats.topPages)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20)
-    .reduce((obj, [k, v]) => ({ ...obj, [k]: v }), {});
   
   stats.topReferrers = Object.entries(stats.topReferrers)
     .sort((a, b) => b[1] - a[1])
@@ -1078,15 +1074,15 @@ function aggregateStats(entries) {
 
   // --- Erweiterte Analysen ---
 
-  // 1. Top Pages mit Unique Visitors
+  // 1. Top Pages mit Unique Visitors, sortiert nach echten Besuchern (eindeutige
+  //    IPs), bei Gleichstand nach Seitenaufrufen. Erst danach auf 20 kürzen,
+  //    damit eine Seite mit vielen Besuchern nicht wegen weniger Aufrufe fehlt.
   const pageIps = {};
   for (const entry of entries) {
     if (entry.isPageView) {
       const cleanPath = entry.path.split('?')[0];
-      if (!isExcludedFromTopPages(cleanPath)) {
-        if (!pageIps[cleanPath]) pageIps[cleanPath] = new Set();
-        pageIps[cleanPath].add(entry.ip);
-      }
+      if (!pageIps[cleanPath]) pageIps[cleanPath] = new Set();
+      pageIps[cleanPath].add(entry.ip);
     }
   }
   stats.topPagesDetailed = Object.entries(stats.topPages)
@@ -1094,7 +1090,11 @@ function aggregateStats(entries) {
       path,
       views,
       uniqueVisitors: pageIps[path] ? pageIps[path].size : 0
-    }));
+    }))
+    .sort((a, b) => b.uniqueVisitors - a.uniqueVisitors || b.views - a.views)
+    .slice(0, 20);
+  stats.topPages = stats.topPagesDetailed
+    .reduce((obj, p) => ({ ...obj, [p.path]: p.views }), {});
 
   // 2. Session-Analyse
   const sessions = buildSessions(entries);

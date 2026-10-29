@@ -16,8 +16,16 @@ const pageList = computed(() => {
     .slice(0, 15)
 })
 
+// Rangfolge und Balken nach echten Besuchern (eindeutige IPs); ohne
+// Detaildaten (Fallback) nach Seitenaufrufen.
+const hasVisitors = computed(() => pageList.value.some(p => p.uniqueVisitors > 0))
+
+function barValue(page) {
+  return hasVisitors.value ? page.uniqueVisitors : page.views
+}
+
 const maxCount = computed(() => {
-  return Math.max(...pageList.value.map(p => p.views), 1)
+  return Math.max(...pageList.value.map(barValue), 1)
 })
 
 function formatPath(path) {
@@ -54,13 +62,16 @@ function formatPath(path) {
           <div class="page-bar-container">
             <div
               class="page-bar"
-              :style="{ width: `${(page.views / maxCount) * 100}%` }"
+              :style="{ width: `${(barValue(page) / maxCount) * 100}%` }"
             ></div>
           </div>
         </div>
         <div class="page-metrics">
-          <span class="page-count">{{ page.views.toLocaleString('de-DE') }}</span>
-          <span v-if="page.uniqueVisitors" class="page-unique" :title="'Unique Visitors'">{{ page.uniqueVisitors.toLocaleString('de-DE') }} UV</span>
+          <template v-if="hasVisitors">
+            <span class="page-count" title="Besucher (eindeutige IPs)">{{ page.uniqueVisitors.toLocaleString('de-DE') }} Besucher</span>
+            <span class="page-unique" title="Seitenaufrufe">{{ page.views.toLocaleString('de-DE') }} Aufrufe</span>
+          </template>
+          <span v-else class="page-count">{{ page.views.toLocaleString('de-DE') }}</span>
         </div>
       </div>
     </div>
