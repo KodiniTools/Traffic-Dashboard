@@ -147,6 +147,17 @@ function getStartOfWeekZurich() {
   return zurichMidnight(`${mondayY}-${mondayM}-${mondayD}`);
 }
 
+// 00:00 Zürich Zeit vor (days - 1) Tagen: "letzte N Tage" = heute + N-1 volle
+// Kalendertage. Ohne diese Ausrichtung begänne der Zeitraum mitten in einem Tag;
+// dieser angeschnittene Tag würde unvollständig gezählt und von der
+// Spike-/Cloaked-Erkennung (pro Kalendertag) anders eingestuft als in anderen
+// Ansichten.
+function getStartOfDaysAgoZurich(days) {
+  const [y, m, d] = getZurichToday().split('-').map(Number);
+  const start = new Date(Date.UTC(y, m - 1, d - (Math.max(1, days) - 1)));
+  return zurichMidnight(start.toISOString().slice(0, 10));
+}
+
 // IPs die von der Statistik ausgeschlossen werden
 // Vollständige IPs oder Präfixe (z.B. '31.10.151' matched alles in diesem Subnetz)
 const EXCLUDED_IPS = [
@@ -491,7 +502,7 @@ function flagCloakedBots(entries, cloakedIpsOut) {
   for (const e of entries) {
     if (e.isBot) continue; // bereits als Bot erkannt (UA/Scanner/Spike)
     let p = prof[e.ip] || (prof[e.ip] = { pageViews: 0, paths: new Set(), assets: 0 });
-    if (e.isPageView) {
+    if (e.isPageRequest) {
       p.pageViews++;
       p.paths.add(e.path.split('?')[0]);
     } else if (e.method === 'GET' && isStaticAsset(e.path)) {
@@ -514,6 +525,7 @@ function flagCloakedBots(entries, cloakedIpsOut) {
     e.isBot = true;
     e.botName = 'cloaked';
     e.isPageView = false;
+    e.isPageRequest = false;
     cloakedIpsOut.add(e.ip);
     flagged++;
   }
@@ -542,7 +554,7 @@ function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
     const t = e.date.getTime();
     if (t < p.first) p.first = t;
     if (t > p.last) p.last = t;
-    if (e.isPageView) {
+    if (e.isPageRequest) {
       p.pageViews++;
       p.paths.add(e.path.split('?')[0]);
     } else if (e.method === 'GET' && isStaticAsset(e.path)) {
@@ -635,6 +647,7 @@ function detectSpikesInWindow(entries, flaggedIpsOut, perPathOut) {
     e.isBot = true;
     e.botName = 'spike';
     e.isPageView = false;
+    e.isPageRequest = false;
     flaggedIpsOut.add(e.ip);
     perPathOut[cp] = (perPathOut[cp] || 0) + 1;
     flaggedCount++;
@@ -699,7 +712,10 @@ const authenticate = (req, res, next) => {
 app.use('/api', authenticate);
 
 // Bot-Patterns (erweitert: Scanner, AI-Crawler, CLI-Tools, Monitoring, SEO-Tools)
-const BOT_PATTERNS = /bot|crawler|spider|googlebot|bingbot|semrush|ahrefs|yandex|baidu|facebook|twitter|telegram|whatsapp|slurp|duckduck|sogou|exabot|facebot|ia_archiver|curl|wget|python-requests|python-urllib|httpie|postman|axios|node-fetch|go-http-client|java\/|libwww-perl|ruby|php\/|scrapy|puppeteer|headlesschrome|phantomjs|selenium|playwright|lighthouse|pagespeed|uptimerobot|pingdom|datadog|newrelic|statuspage|monitoring|scanner|scraper|nutch|mj12bot|dotbot|rogerbot|bytespider|bytedance|petalbot|amazonbot|claudebot|chatgpt-user|gptbot|anthropic-ai|cohere-ai|applebot|archive\.org|webzip|httrack|offline.explorer|sitechecker|nessus|nikto|sqlmap|masscan|zgrab|censys|shodan/i;
+// '(?<!cu)bot': Cubot-Smartphones ("CUBOT KingKong") sind echte Besucher.
+// 'twitter' bewusst NICHT enthalten: Das ist der In-App-Browser der X-App
+// ("Twitter for iPhone") = echte Besucher; der Crawler Twitterbot matcht über 'bot'.
+const BOT_PATTERNS = /(?<!cu)bot|crawler|spider|googlebot|bingbot|semrush|ahrefs|yandex|baidu|facebook|telegram|whatsapp|slurp|duckduck|sogou|exabot|facebot|ia_archiver|curl|wget|python-requests|python-urllib|httpie|postman|axios|node-fetch|go-http-client|java\/|libwww-perl|ruby|php\/|scrapy|puppeteer|headlesschrome|phantomjs|selenium|playwright|lighthouse|pagespeed|uptimerobot|pingdom|datadog|newrelic|statuspage|monitoring|scanner|scraper|nutch|mj12bot|dotbot|rogerbot|bytespider|bytedance|petalbot|amazonbot|claudebot|chatgpt-user|gptbot|anthropic-ai|cohere-ai|applebot|archive\.org|webzip|httrack|offline.explorer|sitechecker|nessus|nikto|sqlmap|masscan|zgrab|censys|shodan/i;
 
 const KNOWN_BOTS = [
   'googlebot', 'bingbot', 'semrush', 'ahrefs', 'yandex', 'baidu',
@@ -808,6 +824,8 @@ function parseLogLine(line) {
   }
 
   const statusCode = parseInt(status);
+  const isPageRequest = method === 'GET' && !isBot && !isExcludedFromTopPages(path) && path !== '-'
+    && !isRedirectStatus(statusCode);
 
   // UTM-Parameter aus Query-String extrahieren
   let utmSource = null, utmMedium = null, utmCampaign = null, utmTerm = null, utmContent = null;
@@ -839,12 +857,17 @@ function parseLogLine(line) {
     utmCampaign,
     utmTerm,
     utmContent,
-    // Echte Seitenanfrage: GET + nicht-Bot + kein statisches Asset + keine
-    // Weiterleitung. Ein 301/302 (z. B. /blog -> /blog/) ist kein gesehener
-    // Inhalt: Der Browser folgt sofort und lädt die Zielseite (die zählt).
+    // Seitenanfrage (unabhängig vom Ergebnis): GET + nicht-Bot + kein statisches
+    // Asset + keine Weiterleitung. Ein 301/302 (z. B. /blog -> /blog/) ist kein
+    // gesehener Inhalt: Der Browser folgt sofort und lädt die Zielseite (die zählt).
     // 304 (Not Modified) ist dagegen ein echter Aufruf aus dem Cache.
-    isPageView: method === 'GET' && !isBot && !isExcludedFromTopPages(path) && path !== '-'
-      && !isRedirectStatus(statusCode)
+    // Dient der Verhaltens-Erkennung (Spike/Cloaked) als Profil – dort zählen
+    // auch Anfragen auf Fehlerseiten (Scanner probieren viele davon durch).
+    isPageRequest,
+    // Gezählter Seitenaufruf: zusätzlich Status < 400. 404/403/5xx sind keine
+    // gesehenen Inhalte (meist Scanner mit Browser-UA) – sie stehen weiterhin in
+    // "Fehlerseiten", aber nicht in Seitenaufrufen/Besuchern/Top Seiten/Sessions.
+    isPageView: isPageRequest && statusCode < 400
   };
 }
 
@@ -1447,7 +1470,7 @@ app.get('/api/stats/week', async (req, res) => {
 // Letzte 14 Tage
 app.get('/api/stats/twoweeks', async (req, res) => {
   try {
-    const entries = await readLogFiles(14);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(14));
     const stats = aggregateStats(entries);
     stats.period = 'twoweeks';
     res.json(stats);
@@ -1460,7 +1483,7 @@ app.get('/api/stats/twoweeks', async (req, res) => {
 // Letzte 30 Tage
 app.get('/api/stats/month', async (req, res) => {
   try {
-    const entries = await readLogFiles(30);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(30));
     const stats = aggregateStats(entries);
     stats.period = 'month';
     res.json(stats);
@@ -1473,7 +1496,7 @@ app.get('/api/stats/month', async (req, res) => {
 // Letzte 3 Monate (90 Tage)
 app.get('/api/stats/quarter', async (req, res) => {
   try {
-    const entries = await readLogFiles(90);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(90));
     const stats = aggregateStats(entries);
     stats.period = 'quarter';
     res.json(stats);
@@ -1486,7 +1509,7 @@ app.get('/api/stats/quarter', async (req, res) => {
 // Letzte 6 Monate (180 Tage)
 app.get('/api/stats/halfyear', async (req, res) => {
   try {
-    const entries = await readLogFiles(180);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(180));
     const stats = aggregateStats(entries);
     stats.period = 'halfyear';
     res.json(stats);
@@ -1499,7 +1522,7 @@ app.get('/api/stats/halfyear', async (req, res) => {
 // Letztes Jahr (365 Tage)
 app.get('/api/stats/year', async (req, res) => {
   try {
-    const entries = await readLogFiles(365);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(365));
     const stats = aggregateStats(entries);
     stats.period = 'year';
     res.json(stats);
@@ -1513,7 +1536,7 @@ app.get('/api/stats/year', async (req, res) => {
 app.get('/api/stats/custom/:days', async (req, res) => {
   try {
     const days = Math.min(parseInt(req.params.days) || 1, 365);
-    const entries = await readLogFiles(days);
+    const entries = await readLogFiles(getStartOfDaysAgoZurich(days));
     const stats = aggregateStats(entries);
     stats.period = `${days} days`;
     res.json(stats);
