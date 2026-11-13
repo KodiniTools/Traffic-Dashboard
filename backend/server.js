@@ -111,8 +111,22 @@ const ENGAGED_MIN_SECONDS = 10;
 // Zürich (Schweiz) Zeitzone
 const TIMEZONE = 'Europe/Zurich';
 
+// Formatter einmal anlegen und wiederverwenden. date.toLocale*String({ timeZone })
+// erzeugt bei JEDEM Aufruf intern ein neues Intl.DateTimeFormat (ICU, nativer
+// Speicher). Pro Log-Eintrag aufgerufen kostete das bei 14/30 Tagen Sekunden und
+// mehrere hundert MB RSS -> PM2 (max_memory_restart) startete den Dienst neu,
+// laufende Requests brachen ab. Ausgabe ist identisch zu den toLocale*-Aufrufen.
+const ZURICH_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE });
+const ZURICH_HOUR_FMT = new Intl.DateTimeFormat('en-US', { timeZone: TIMEZONE, hour: '2-digit', hour12: false });
+// Entspricht date.toLocaleString('en-US', { timeZone }) (Datum + Uhrzeit)
+const ZURICH_DATETIME_FMT = new Intl.DateTimeFormat('en-US', {
+  timeZone: TIMEZONE,
+  year: 'numeric', month: 'numeric', day: 'numeric',
+  hour: 'numeric', minute: 'numeric', second: 'numeric'
+});
+
 function getZurichDateString(date = new Date()) {
-  return date.toLocaleDateString('en-CA', { timeZone: TIMEZONE }); // 'YYYY-MM-DD'
+  return ZURICH_DATE_FMT.format(date); // 'YYYY-MM-DD'
 }
 
 function getZurichUtcOffsetMs(date) {
@@ -250,7 +264,7 @@ const EXCLUDED_EXTENSIONS = [
 
 // Gibt die Stunde in Zürich Zeit zurück
 function getZurichHour(date) {
-  return parseInt(date.toLocaleString('en-US', { timeZone: TIMEZONE, hour: '2-digit', hour12: false }));
+  return parseInt(ZURICH_HOUR_FMT.format(date));
 }
 
 // Gibt das heutige Datum in Zürich zurück (YYYY-MM-DD)
@@ -1266,7 +1280,7 @@ function aggregateStats(entries) {
     }
   }
   for (const entry of humanEntries) {
-    const zurichDate = new Date(entry.date.toLocaleString('en-US', { timeZone: TIMEZONE }));
+    const zurichDate = new Date(ZURICH_DATETIME_FMT.format(entry.date));
     const dow = zurichDate.getDay(); // 0=So
     const hour = zurichDate.getHours();
     heatmap[dow][hour]++;

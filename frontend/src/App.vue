@@ -17,6 +17,7 @@ import AiSourceStats from './components/AiSourceStats.vue'
 import LongestSessions from './components/LongestSessions.vue'
 import VisitorCheck from './components/VisitorCheck.vue'
 import ZurichClock from './components/ZurichClock.vue'
+import { withRetry } from './api/retry.js'
 
 // API Key - wird aus localStorage geladen oder muss eingegeben werden
 const apiKey = ref(localStorage.getItem('dashboard_api_key') || '')
@@ -90,11 +91,12 @@ const periods = [
 ]
 
 // API Fetch Helper
-async function fetchApi(endpoint) {
+async function fetchApi(endpoint, { signal } = {}) {
  const response = await fetch(`/traffic-dashboard/api${endpoint}`, {
     headers: {
       'X-API-Key': apiKey.value
-    }
+    },
+    signal
   })
   
   if (response.status === 401) {
@@ -103,7 +105,9 @@ async function fetchApi(endpoint) {
   }
   
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
+    const err = new Error(`HTTP ${response.status}`)
+    err.status = response.status
+    throw err
   }
   
   return response.json()
@@ -125,16 +129,33 @@ async function login() {
 }
 
 // Statistiken laden
+// Nur die jeweils letzte Anfrage zählt: ein Zeitraumwechsel bricht die vorige
+// ab, damit keine veraltete Antwort/Fehlermeldung die neue überschreibt.
+// Vorübergehende Fehler (Backend-Neustart -> 404/502/503/504) werden kurz
+// wiederholt, bevor die Fehlerseite erscheint.
+let statsController = null
 async function loadStats() {
+  statsController?.abort()
+  const controller = new AbortController()
+  statsController = controller
   loading.value = true
   error.value = null
-  
+
   try {
-    stats.value = await fetchApi(`/stats/${selectedPeriod.value}`)
+    const data = await withRetry(
+      () => fetchApi(`/stats/${selectedPeriod.value}`, { signal: controller.signal }),
+      { signal: controller.signal }
+    )
+    if (statsController !== controller) return
+    stats.value = data
   } catch (err) {
+    if (statsController !== controller || err.name === 'AbortError') return
     error.value = err.message
   } finally {
-    loading.value = false
+    if (statsController === controller) {
+      loading.value = false
+      statsController = null
+    }
   }
 }
 
@@ -236,6 +257,7 @@ function logout() {
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
   clearInterval(dayWatchInterval)
+  statsController?.abort()
 }
 
 // Beim Start prüfen ob API-Key vorhanden
@@ -253,6 +275,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  statsController?.abort()
   clearInterval(refreshInterval)
   clearInterval(liveInterval)
   clearInterval(dayWatchInterval)
