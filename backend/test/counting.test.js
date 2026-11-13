@@ -64,3 +64,13 @@ test('Rollende Zeiträume beginnen um 00:00 Zürich', () => {
   assert.strictEqual(days, 13); // heute + 13 volle Vortage = 14 Kalendertage
   assert.strictEqual(getZurichDateString(getStartOfDaysAgoZurich(1)), getZurichDateString());
 });
+
+test('getZurichDateString (gecachter Formatter) = toLocaleDateString, auch über Zeitumstellung', () => {
+  const tz = { timeZone: 'Europe/Zurich' };
+  // Um die Zeitumstellungen 2026 (29.03./25.10.) und Mitternacht herum
+  for (const iso of ['2026-03-28T22:59:59Z', '2026-03-28T23:00:00Z', '2026-03-29T00:59:59Z', '2026-03-29T01:00:00Z',
+    '2026-10-24T21:59:59Z', '2026-10-24T22:00:00Z', '2026-10-25T00:30:00Z', '2026-10-25T01:30:00Z', '2026-12-31T23:00:00Z']) {
+    const d = new Date(iso);
+    assert.strictEqual(getZurichDateString(d), d.toLocaleDateString('en-CA', tz), iso);
+  }
+});
