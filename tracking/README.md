@@ -13,6 +13,18 @@ Dashboard verlängert damit die Session bis zum letzten Lebenszeichen.
   verlängern nur bestehende Sessions; sie eröffnen nie eine neue.
 - Solange kein Tool das Skript einbindet, ändert sich im Dashboard nichts.
 
+### Besucher (bestätigt)
+
+Zusätzlich meldet das Skript jede angesehene Seite **einmal sofort**
+(`/__kt_hb?v=1`): beim Laden, bei Seitenwechseln ohne Neuladen (pushState,
+z. B. Vue Router; reine Query-/Hash-Änderungen wie `?lang=en` zählen nicht) und
+bei Rückkehr per Zurück-Button aus dem Browser-Cache. Das Dashboard zählt daraus
+die Kachel **„Besucher (bestätigt)“** (eindeutige IPs mit Meldung). Bots führen
+in der Regel kein JavaScript aus, Bot-User-Agents werden verworfen.
+Untertitel: wie viele davon **unter 30 s aktiv** waren (kein regulärer
+Heartbeat). Die bestehenden Zahlen (Besucher, Seitenaufrufe, Sessions) bleiben
+unverändert. Daten gibt es erst ab dem Deploy dieses Skripts.
+
 ## Schritt 1 – Nginx (einmalig, Server-Block von kodinitools.com)
 
 In die Nginx-Konfiguration **der Website** (nicht die des Dashboards), z. B.

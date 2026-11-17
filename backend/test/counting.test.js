@@ -74,3 +74,30 @@ test('getZurichDateString (gecachter Formatter) = toLocaleDateString, auch über
     assert.strictEqual(getZurichDateString(d), d.toLocaleDateString('en-CA', tz), iso);
   }
 });
+
+test('Besucher (bestätigt): zählt IPs mit Ansichts-Meldung (v=1), Kurzbesuche = ohne regulären Heartbeat', () => {
+  const raw = [
+    line('4.4.4.1', '/texteditor/app?lang=en', 200, UA, '10:00:00'),
+    line('4.4.4.1', '/__kt_hb?v=1&t=1', 204, UA, '10:00:01'),
+    line('4.4.4.1', '/__kt_hb?t=2', 204, UA, '10:00:31'),   // blieb > 30 s aktiv
+    line('4.4.4.2', '/audio-cutter/', 200, UA, '10:01:00'),
+    line('4.4.4.2', '/__kt_hb?v=1&t=3', 204, UA, '10:01:01'), // Kurzbesuch
+    line('4.4.4.3', '/__kt_hb?v=1&t=4', 204, UA, '10:02:00'), // Seite aus Browser-Cache
+    line('4.4.4.4', '/', 200, UA, '10:03:00'),                // kein JavaScript -> nicht bestätigt
+    line('4.4.4.5', '/__kt_hb?v=1&t=5', 204, 'Googlebot/2.1', '10:04:00') // Bot-UA verworfen
+  ].map(parseLogLine).filter(Boolean);
+  const entries = raw.filter(e => !e.isHeartbeat);
+  entries.heartbeats = raw.filter(e => e.isHeartbeat);
+  assert.strictEqual(entries.heartbeats.filter(h => h.isView).length, 3);
+
+  const stats = aggregateStats(entries);
+  assert.deepStrictEqual(stats.confirmedVisitors, { total: 3, short: 2, shortPercent: 66.7 });
+  // Bestehende Zahlen bleiben unverändert: Heartbeats sind keine Seitenaufrufe
+  assert.strictEqual(stats.uniqueVisitors, 3);
+  assert.strictEqual(stats.humanPageViews, 3);
+});
+
+test('Besucher (bestätigt) ohne Heartbeat-Daten = 0', () => {
+  const stats = aggregateStats([line('5.5.5.5', '/', 200)].map(parseLogLine));
+  assert.deepStrictEqual(stats.confirmedVisitors, { total: 0, short: 0, shortPercent: 0 });
+});
