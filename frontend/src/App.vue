@@ -26,6 +26,14 @@ const authError = ref('')
 
 // Daten
 const stats = ref(null)
+
+// Untertitel der Kachel "Besucher (bestätigt)": Anteil der Besucher, die keine
+// 30 s aktiv auf der Seite waren (kein regulärer Heartbeat).
+const confirmedVisitorsSubtitle = computed(() => {
+  const c = stats.value?.confirmedVisitors
+  if (!c || c.total === 0) return 'per JavaScript gemeldet · noch keine Daten'
+  return `${c.short.toLocaleString('de-DE')} davon unter 30 s aktiv (${c.shortPercent.toLocaleString('de-DE')}%)`
+})
 const liveStats = ref(null)
 const todayOverview = ref(null)
 const visitorCheck = ref(null) // /stats/coverage (heute): Heartbeat-geprüfte Besucher
@@ -486,6 +494,13 @@ const lastUpdated = computed(() => {
             :value="stats.uniqueVisitors.toLocaleString('de-DE')"
             icon="users"
             color="blue"
+          />
+          <StatsCard
+            title="Besucher (bestätigt)"
+            :value="(stats.confirmedVisitors?.total || 0).toLocaleString('de-DE')"
+            :subtitle="confirmedVisitorsSubtitle"
+            icon="verified"
+            color="teal"
           />
           <StatsCard
             title="Seitenaufrufe"

@@ -798,7 +798,9 @@ function parseLogLine(line) {
   // der normalen Eintragsliste (siehe readLogFiles). Bot-UAs werden verworfen.
   if (isHeartbeatPath(path)) {
     if (!userAgent || userAgent === '-' || BOT_PATTERNS.test(userAgent)) return null;
-    return { ip, date, isHeartbeat: true };
+    // "v=1": Ansichts-Meldung direkt beim Laden/Seitenwechsel (Basis für
+    // "Besucher (bestätigt)"). Ohne v=1: normaler 30-s-Heartbeat (Verweildauer).
+    return { ip, date, isHeartbeat: true, isView: isViewBeacon(path) };
   }
 
   // XHR-/API-/Polling-Endpunkte komplett ausschließen (kein zählbarer Traffic
@@ -892,6 +894,42 @@ function isRedirectStatus(status) {
 // Heartbeat-Zeile? (GET oder POST/sendBeacon auf HEARTBEAT_PATH, mit/ohne Query)
 function isHeartbeatPath(path) {
   return path === HEARTBEAT_PATH || path.startsWith(HEARTBEAT_PATH + '?');
+}
+
+// Ansichts-Meldung von heartbeat.js (/__kt_hb?v=1&t=...)
+function isViewBeacon(path) {
+  const qs = path.split('?')[1];
+  if (!qs) return false;
+  try {
+    return new URLSearchParams(qs).get('v') === '1';
+  } catch {
+    return false;
+  }
+}
+
+// "Besucher (bestätigt)": IPs, deren Browser beim Laden einer Seite die
+// Ansichts-Meldung geschickt hat. Bots führen in der Regel kein JavaScript aus,
+// Bot-User-Agents sind beim Einlesen bereits verworfen. Bewusst UNABHÄNGIG von
+// Spike-/Cloaked-Filter und isPageView: Die Meldung belegt einen echten Browser,
+// auch wenn die Seite aus dem Browser-Cache kam (kein Log-Eintrag).
+// "short": bestätigte Besucher ohne einen einzigen regulären Heartbeat, also
+// höchstens ~30 s aktiv auf der Seite (Heartbeat sendet erst nach 30 s und nur
+// bei sichtbarem Tab + Aktivität bzw. laufendem Audio/Video).
+function computeConfirmedVisitors(heartbeats) {
+  const viewIps = new Set();
+  const activeIps = new Set();
+  for (const hb of heartbeats || []) {
+    if (hb.isView) viewIps.add(hb.ip);
+    else activeIps.add(hb.ip);
+  }
+  let short = 0;
+  for (const ip of viewIps) if (!activeIps.has(ip)) short++;
+  const total = viewIps.size;
+  return {
+    total,
+    short,
+    shortPercent: total > 0 ? Math.round((short / total) * 1000) / 10 : 0
+  };
 }
 
 // Log-Dateien lesen (mit gzip Unterstützung)
@@ -1025,6 +1063,7 @@ function aggregateStats(entries) {
     botRequests: entries.filter(e => e.isBot).length,
     // Zusammenfassung der verhaltensbasierten Spike-Erkennung (falls vorhanden)
     spikeDetection: entries.spikeDetection || { flaggedRequests: 0, flaggedIps: 0, paths: [] },
+    confirmedVisitors: computeConfirmedVisitors(entries.heartbeats),
     statusCodes: {},
     topPages: {},
     topReferrers: {},
