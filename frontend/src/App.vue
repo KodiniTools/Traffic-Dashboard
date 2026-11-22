@@ -455,7 +455,7 @@ const lastUpdated = computed(() => {
             </div>
             <div class="today-stat">
               <span class="today-stat-value">{{ todayOverview.totalBytesFormatted }}</span>
-              <span class="today-stat-label">Traffic</span>
+              <span class="today-stat-label" :title="todayOverview.botBytesFormatted ? `ohne ${todayOverview.botBytesFormatted} Bot-Traffic` : undefined">Traffic (Menschen)</span>
             </div>
           </div>
         </div>
@@ -531,8 +531,9 @@ const lastUpdated = computed(() => {
             color="orange"
           />
           <StatsCard
-            title="Traffic"
+            title="Traffic (Menschen)"
             :value="stats.totalBytesFormatted"
+            :subtitle="stats.botBytesFormatted ? `ohne ${stats.botBytesFormatted} Bot-Traffic` : undefined"
             icon="download"
             color="purple"
           />
