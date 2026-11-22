@@ -11,7 +11,6 @@ import EntryExitPages from './components/EntryExitPages.vue'
 import DeviceStats from './components/DeviceStats.vue'
 import ErrorPages from './components/ErrorPages.vue'
 import UserBehavior from './components/UserBehavior.vue'
-import BandwidthAnalysis from './components/BandwidthAnalysis.vue'
 import UTMStats from './components/UTMStats.vue'
 import AiSourceStats from './components/AiSourceStats.vue'
 import LongestSessions from './components/LongestSessions.vue'
@@ -586,19 +585,13 @@ const lastUpdated = computed(() => {
           @change-date="changeLongestSessionsDate"
         />
 
-        <!-- Nutzerverhalten & Bandwidth -->
+        <!-- Nutzerverhalten -->
         <div class="analytics-row">
           <UserBehavior
             :sessionDuration="stats.sessionDuration"
             :engagement="stats.engagement"
             :sessionDepth="stats.sessionDepth"
             :peakHoursHeatmap="stats.peakHoursHeatmap"
-          />
-          <BandwidthAnalysis
-            :bandwidthByPage="stats.bandwidthByPage"
-            :trafficByHour="stats.trafficByHour"
-            :totalBytesFormatted="stats.totalBytesFormatted"
-            :totalBytes="stats.totalBytes"
           />
         </div>
 
