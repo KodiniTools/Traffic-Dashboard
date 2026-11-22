@@ -39,6 +39,7 @@ function getSourceIcon(domain) {
         <line x1="10" y1="14" x2="21" y2="3"/>
       </svg>
       Traffic-Quellen
+      <span class="unit">Besucher</span>
     </h3>
     
     <div class="referrer-list">
@@ -57,7 +58,7 @@ function getSourceIcon(domain) {
             ></div>
           </div>
         </div>
-        <span class="referrer-count">{{ ref.count.toLocaleString('de-DE') }}</span>
+        <span class="referrer-count" title="Besucher (eindeutige IPs) mit dieser Quelle">{{ ref.count.toLocaleString('de-DE') }}</span>
       </div>
     </div>
     
@@ -83,6 +84,12 @@ h3 {
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: 1rem;
+}
+
+h3 .unit {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 h3 svg {

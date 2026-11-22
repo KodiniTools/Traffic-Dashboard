@@ -260,6 +260,7 @@ const EXCLUDED_EXTENSIONS = [
   '.xml', '.txt', '.json',
   '.pdf', '.zip', '.gz',
   '.mp4', '.webm', '.mp3', '.ogg',
+  '.webmanifest', // PWA-Manifest: lädt der Browser automatisch nach
 ];
 
 // Gibt die Stunde in Zürich Zeit zurück
@@ -1085,12 +1086,17 @@ function aggregateStats(entries) {
       stats.topPages[cleanPath] = (stats.topPages[cleanPath] || 0) + 1;
     }
     
-    // Top Referrers (nur von echten Seitenbesuchen, keine Bots)
-    if (!entry.isBot && entry.referrer && entry.referrer !== '-' && !entry.referrer.includes('kodinitools.com')) {
+    // Traffic-Quellen: EINDEUTIGE BESUCHER (IPs) pro externer Quelle, nur aus
+    // gezählten Seitenaufrufen (isPageView: kein Bot, kein Asset, keine
+    // Weiterleitung, Status < 400). Früher zählte hier jede Anfrage mit
+    // externem Referrer – ein Google-Klick auf eine Seite mit 301 zählte doppelt,
+    // jedes Neuladen erneut. So ist der Wert mit Klick-Zahlen (Search Console)
+    // vergleichbar.
+    if (entry.isPageView && entry.referrer && entry.referrer !== '-' && !entry.referrer.includes('kodinitools.com')) {
       try {
-        const refUrl = new URL(entry.referrer);
-        const refDomain = refUrl.hostname;
-        stats.topReferrers[refDomain] = (stats.topReferrers[refDomain] || 0) + 1;
+        const refDomain = new URL(entry.referrer).hostname;
+        if (!stats.topReferrers[refDomain]) stats.topReferrers[refDomain] = new Set();
+        stats.topReferrers[refDomain].add(entry.ip);
       } catch (e) {
         // Ungültige URL ignorieren
       }
@@ -1137,6 +1143,7 @@ function aggregateStats(entries) {
   // Top Listen sortieren und limitieren
   
   stats.topReferrers = Object.entries(stats.topReferrers)
+    .map(([domain, ips]) => [domain, ips.size])
     .sort((a, b) => b[1] - a[1])
     .slice(0, 15)
     .reduce((obj, [k, v]) => ({ ...obj, [k]: v }), {});
