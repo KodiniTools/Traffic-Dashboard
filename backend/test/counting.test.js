@@ -101,3 +101,25 @@ test('Besucher (bestätigt) ohne Heartbeat-Daten = 0', () => {
   const stats = aggregateStats([line('5.5.5.5', '/', 200)].map(parseLogLine));
   assert.deepStrictEqual(stats.confirmedVisitors, { total: 0, short: 0, shortPercent: 0 });
 });
+
+test('Traffic-Quellen: eindeutige Besucher pro Quelle, nur gezählte Seitenaufrufe', () => {
+  const G = 'https://www.google.com/';
+  const ref = (ip, p, status, referrer, time) =>
+    `${ip} - - [05/Nov/2026:${time} +0100] "GET ${p} HTTP/1.1" ${status} 100 "${referrer}" "${UA}"`;
+  const entries = [
+    ref('6.6.6.1', '/playlist_generator/app', 301, G, '10:00:00'), // Weiterleitung: zählt nicht
+    ref('6.6.6.1', '/playlist_generator/', 200, G, '10:00:01'),
+    ref('6.6.6.1', '/playlist_generator/', 200, G, '10:05:00'),     // Neuladen: gleicher Besucher
+    ref('6.6.6.2', '/texteditor/', 200, G, '10:01:00'),
+    ref('6.6.6.3', '/gibtsnicht', 404, G, '10:02:00'),              // Fehlerseite: zählt nicht
+    ref('6.6.6.4', '/', 200, 'https://www.bing.com/', '10:03:00'),
+    ref('6.6.6.5', '/', 200, 'https://kodinitools.com/blog/', '10:04:00') // intern
+  ].map(parseLogLine);
+  const stats = aggregateStats(entries);
+  assert.deepStrictEqual(stats.topReferrers, { 'www.google.com': 2, 'www.bing.com': 1 });
+});
+
+test('manifest.webmanifest ist ein Asset, kein Seitenaufruf', () => {
+  const e = parseLogLine(line('7.7.7.7', '/playlist_generator/manifest.webmanifest', 200));
+  assert.strictEqual(e.isPageView, false);
+});
