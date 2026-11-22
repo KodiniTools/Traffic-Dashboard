@@ -123,3 +123,16 @@ test('manifest.webmanifest ist ein Asset, kein Seitenaufruf', () => {
   const e = parseLogLine(line('7.7.7.7', '/playlist_generator/manifest.webmanifest', 200));
   assert.strictEqual(e.isPageView, false);
 });
+
+test('Traffic (Bytes) zählt nur menschliche Anfragen, Bot-Bytes separat', () => {
+  const big = (ip, ua, bytes) =>
+    `${ip} - - [05/Nov/2026:10:00:00 +0100] "GET / HTTP/1.1" 200 ${bytes} "-" "${ua}"`;
+  const entries = [
+    big('8.8.8.1', UA, 1000),
+    big('8.8.8.2', 'Mozilla/5.0 (compatible; Googlebot/2.1)', 5000),
+    big('8.8.8.3', 'Lighthouse', 7000)
+  ].map(parseLogLine);
+  const stats = aggregateStats(entries);
+  assert.strictEqual(stats.totalBytes, 1000);
+  assert.strictEqual(stats.botBytes, 12000);
+});

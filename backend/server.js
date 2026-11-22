@@ -1058,7 +1058,8 @@ function aggregateStats(entries) {
     totalRequests: entries.length,
     uniqueVisitors: new Set(entries.filter(e => e.isPageView).map(e => e.ip)).size,
     totalBots: new Set(entries.filter(e => e.isBot).map(e => e.ip)).size,
-    totalBytes: entries.reduce((sum, e) => sum + e.bytes, 0),
+    totalBytes: sumBytes(entries, false), // nur menschlicher Traffic
+    botBytes: sumBytes(entries, true),
     humanRequests: entries.filter(isHumanRequest).length,
     humanPageViews: entries.filter(e => e.isPageView).length,
     botRequests: entries.filter(e => e.isBot).length,
@@ -1154,6 +1155,7 @@ function aggregateStats(entries) {
   
   // Bytes formatieren
   stats.totalBytesFormatted = formatBytes(stats.totalBytes);
+  stats.botBytesFormatted = formatBytes(stats.botBytes);
 
   // --- Erweiterte Analysen ---
 
@@ -1480,6 +1482,16 @@ function aggregateStats(entries) {
   return stats;
 }
 
+// Übertragene Bytes getrennt nach Mensch/Bot. isBot umfasst auch die per
+// Verhalten erkannten Spike-/Cloaked-Anfragen. Die Kachel "Traffic" zeigt nur
+// menschlichen Traffic (inkl. Assets der echten Seitenaufrufe); Bot-Traffic
+// wird separat als botBytes ausgewiesen.
+function sumBytes(entries, bots) {
+  let sum = 0;
+  for (const e of entries) if (Boolean(e.isBot) === bots) sum += e.bytes;
+  return sum;
+}
+
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -1639,8 +1651,9 @@ app.get('/api/stats/today-overview', async (req, res) => {
       pageViews: todayEntries.filter(e => e.isPageView).length,
       humanRequests: todayEntries.filter(isHumanRequest).length,
       botRequests: todayEntries.filter(e => e.isBot).length,
-      totalBytes: todayEntries.reduce((sum, e) => sum + e.bytes, 0),
-      totalBytesFormatted: formatBytes(todayEntries.reduce((sum, e) => sum + e.bytes, 0)),
+      totalBytes: sumBytes(todayEntries, false), // nur menschlicher Traffic
+      totalBytesFormatted: formatBytes(sumBytes(todayEntries, false)),
+      botBytesFormatted: formatBytes(sumBytes(todayEntries, true)),
       sessions: sessions.length,
       newVisitors: singleVisitIps,
       returningVisitors: returningIps,
@@ -1831,7 +1844,7 @@ app.get('/api/stats/live', async (req, res) => {
         uniqueVisitors: new Set(recentEntries.filter(e => e.isPageView).map(e => e.ip)).size,
         pageViews: recentEntries.filter(e => e.isPageView).length,
         bots: recentEntries.filter(e => e.isBot).length,
-        bytes: recentEntries.reduce((sum, e) => sum + e.bytes, 0)
+        bytes: sumBytes(recentEntries, false) // nur menschlicher Traffic
       },
       recentRequests: recentEntries.slice(-50).reverse().map(e => ({
         time: e.date.toISOString(),
